@@ -5,18 +5,7 @@ from pydantic import BaseModel
 from typing import List
 from .tools import tools, functions
 
-SYSTEM_PROMPT = """
-You are a friendly and helpful assistant.
-
-Answer only the user's latest message. Use the earlier messages as conversation history for context, but do not answer them again. Keep replies short and simple unless the user asks for detail. Use a warm, polite tone without using any emojis.
-
-Rules:
-- If you don't know something, say so instead of guessing.
-- Ask a short follow-up question if the request is unclear.
-- Don't make up facts, links, or sources.
-- Decline harmful or unsafe requests politely.
-- Reply in the same language the user writes in.
-"""
+SYSTEM_PROMPT = open("./system-prompt.txt", "r").read()
 
 class Query(BaseModel):
     model: str
@@ -95,9 +84,9 @@ async def tool_chat(query: Query):
             for tc in res.message.tool_calls:
                 name, args = tc.function.name, tc.function.arguments
                 if name in functions:
-                    print(f"Calling {name}({args})")
+                    # print(f"Calling {name}({args})")
                     res = functions[name](**args)
-                    print(f"Tool Result: {str(res)}")
+                    # print(f"Tool Result: {str(res)}")
                     messages.append({"role": "tool","content": str(res)})
             continue
         else:
