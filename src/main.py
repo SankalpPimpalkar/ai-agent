@@ -1,14 +1,13 @@
 from ollama import AsyncClient, ChatResponse
 from fastapi import FastAPI
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import List
 from .tools import tools, functions
-
-SYSTEM_PROMPT = open("./system-prompt.txt", "r").read()
+from .settings import DEFAULT_MODEL, SYSTEM_PROMPT
 
 class Query(BaseModel):
-    model: str
+    model: str = Field(default=DEFAULT_MODEL)
     input: str
 
 class Message(BaseModel):
@@ -68,6 +67,9 @@ async def tool_chat(query: Query):
     messages = trim_chat(msgs=messages)
     messages.append(Message(role='user', content=query.input))
 
+    total_input_tokens = 0
+    total_output_tokens = 0
+
     while True:
         formatted_msgs = []
         for m in messages:
@@ -79,6 +81,8 @@ async def tool_chat(query: Query):
             think=True
         )
         messages.append(res.message)
+        total_input_tokens += res.prompt_eval_count
+        total_output_tokens += res.eval_count
 
         if res.message.tool_calls:
             for tc in res.message.tool_calls:
@@ -91,7 +95,14 @@ async def tool_chat(query: Query):
             continue
         else:
             break
-    return res.message.content
+    return {
+        "content": res.message.content,
+        "usage": {
+            "prompt_tokens": total_input_tokens,
+            "completion_tokens": total_output_tokens,
+            "total_tokens": total_input_tokens + total_output_tokens
+        }
+    }
 
 @app.post('/api/stream')
 def stream_chat(query: Query):
