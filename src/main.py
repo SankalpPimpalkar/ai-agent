@@ -4,7 +4,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from typing import List
 from .tools import tools, functions
-from .settings import DEFAULT_MODEL, SYSTEM_PROMPT
+from .settings import DEFAULT_MODEL, SYSTEM_PROMPT, THINKING_MODEL
 
 class Query(BaseModel):
     model: str = Field(default=DEFAULT_MODEL)
@@ -58,7 +58,14 @@ async def normal_chat(query: Query):
         messages=formatted_msgs,
     )
     messages.append(Message(role='assistant', content=res.message.content))
-    return res.message.content
+    return {
+        "content": res.message.content,
+        "usage": {
+            "prompt_tokens": res.prompt_eval_count,
+            "completion_tokens": res.eval_count,
+            "total_tokens": res.prompt_eval_count + res.eval_count
+        }
+    }
 
 @app.post('/api/tool')
 async def tool_chat(query: Query):
@@ -66,7 +73,6 @@ async def tool_chat(query: Query):
     global messages
     messages = trim_chat(msgs=messages)
     messages.append(Message(role='user', content=query.input))
-
     total_input_tokens = 0
     total_output_tokens = 0
 
@@ -78,7 +84,7 @@ async def tool_chat(query: Query):
             model=query.model, 
             messages=formatted_msgs,
             tools=tools,
-            think=True
+            think=THINKING_MODEL
         )
         messages.append(res.message)
         total_input_tokens += res.prompt_eval_count
@@ -88,7 +94,7 @@ async def tool_chat(query: Query):
             for tc in res.message.tool_calls:
                 name, args = tc.function.name, tc.function.arguments
                 if name in functions:
-                    # print(f"Calling {name}({args})")
+                    print(f"Calling {name}({args})")
                     res = functions[name](**args)
                     # print(f"Tool Result: {str(res)}")
                     messages.append({"role": "tool","content": str(res)})
@@ -112,5 +118,5 @@ def stream_chat(query: Query):
     formatted_msgs = [m.model_dump() for m in messages]
     return StreamingResponse(
         content=stream_response(model=query.model, msgs=formatted_msgs),
-        media_type='text/plain'
+        media_type='text/event-stream'
     )
