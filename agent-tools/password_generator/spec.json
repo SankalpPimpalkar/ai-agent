@@ -1,0 +1,1 @@
+{"properties": {"length": {"type": "integer", "description": "length"}, "min_digits": {"type": "integer", "description": "min digits"}, "min_symbols": {"type": "integer", "description": "min symbols"}}, "required": []}

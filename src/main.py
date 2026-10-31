@@ -1,132 +1,111 @@
-from ollama import AsyncClient, ChatResponse
+from ollama import AsyncClient, ChatResponse, Message
 from fastapi import FastAPI
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, Field
-from typing import List
 from .tools import tools, functions
 from .tools.tool_builder import load_custom_tools
-from .settings import DEFAULT_MODEL, SYSTEM_PROMPT, THINKING_MODEL
-class Query(BaseModel):
-    model: str = Field(default=DEFAULT_MODEL)
-    input: str
-
-class Message(BaseModel):
-    role: str
-    content: str
-
-async def stream_response(model: str, msgs: List[Message]):
-    try:
-        global messages
-        client = AsyncClient()
-        stream: ChatResponse = await client.chat(
-            model=model, 
-            messages=msgs, 
-            stream=True
-        )
-        full_response = ""
-
-        async for chunk in stream:
-            out = chunk['message']['content']
-            full_response += str(out)
-            yield out
-
-        messages.append(Message(role='assistant', content=full_response))
-    except Exception as e:
-        yield f"\n[Error: {str(e)}]"
-
-def trim_chat(msgs: List[Message], max_turns: int = 20):
-    system_prompt = msgs[0]
-    chat_turns = msgs[1:]
-    max_messages = max_turns
-
-    if len(chat_turns) > max_messages:
-        chat_turns = chat_turns[-max_messages:]
-    return [system_prompt] + chat_turns
+from .settings import THINKING_MODEL
+from .utils import stream_response, trim_chat
+from .memory import messages as chat_history
+from .schemas import Query
+import asyncio
+import json
 
 app = FastAPI()
-messages: List[Message] = [Message(role = 'system', content = SYSTEM_PROMPT)]
+client = AsyncClient()
 
-@app.post('/api/chat')
+@app.post("/api/stream")
+def stream_chat(query: Query):
+    trim_chat()
+    chat_history.append(Message(role="user", content=query.input))
+    formatted_msgs = [m if isinstance(m, dict) else m.model_dump() for m in chat_history]
+
+    return StreamingResponse(
+        content=stream_response(client=client, model=query.model, msgs=formatted_msgs),
+        media_type="text/event-stream",
+    )
+
+@app.post("/api/chat")
 async def normal_chat(query: Query):
-    client = AsyncClient()
-    global messages
-    messages = trim_chat(msgs=messages)
-    messages.append(Message(role='user', content=query.input))
-    formatted_msgs = [m.model_dump() for m in messages]
+    trim_chat()
+    chat_history.append(Message(role="user", content=query.input))
+    formatted_msgs = [m.model_dump() for m in chat_history]
+
     res: ChatResponse = await client.chat(
-        model=query.model, 
+        model=query.model,
         messages=formatted_msgs,
     )
-    messages.append(Message(role='assistant', content=res.message.content))
+    chat_history.append(Message(role="assistant", content=res.message.content))
+
     return {
         "content": res.message.content,
         "usage": {
             "prompt_tokens": res.prompt_eval_count,
             "completion_tokens": res.eval_count,
-            "total_tokens": res.prompt_eval_count + res.eval_count
-        }
+            "total_tokens": res.prompt_eval_count + res.eval_count,
+        },
     }
 
-@app.post('/api/tool')
-async def tool_chat(query: Query):
-    client = AsyncClient()
-    global messages
-    messages = trim_chat(msgs=messages)
-    messages.append(Message(role='user', content=query.input))
-    total_input_tokens = 0
-    total_output_tokens = 0
 
-    for _ in range(15):
+@app.post("/api/tool")
+async def tool_chat(query: Query):
+    trim_chat()
+    chat_history.append(Message(role="user", content=query.input))
+
+    total_in = total_out = 0
+    seen, content, errors  = {}, "Stopped after too many steps.", 0
+
+    for i in range(25):
         custom_tools, custom_funcs = load_custom_tools()
         all_tools = tools + custom_tools
         all_funcs = {**functions, **custom_funcs}
-        formatted_msgs = []
-
-        for m in messages:
-            formatted_msgs.append(m if isinstance(m, dict) else m.model_dump())
+        formatted_msgs = [m if isinstance(m, dict) else m.model_dump() for m in chat_history]
 
         res: ChatResponse = await client.chat(
-            model=query.model, 
+            model=query.model,
             messages=formatted_msgs,
             tools=all_tools,
-            think=THINKING_MODEL
+            think=THINKING_MODEL,
+            options={"num_ctx": 8192},
         )
-        messages.append(res.message)
-        total_input_tokens += res.prompt_eval_count
-        total_output_tokens += res.eval_count
+        chat_history.append(res.message)
+        total_in += res.prompt_eval_count or 0
+        total_out += res.eval_count or 0
 
-        if res.message.tool_calls:
-            for tc in res.message.tool_calls:
-                name, args = tc.function.name, tc.function.arguments
-                if name in all_funcs:
-                    print(f"Calling {name}({args})\n")
-                    res = all_funcs[name](**args)
-                    # print(f"Tool Result: {str(res)}")
-                else:
-                    res = f"Error: unknown tool '{name}'"
-                messages.append({"role": "tool","content": str(res)})
-            continue
-        else:
+        if not res.message.tool_calls:
+            content = (res.message.content or "").removeprefix("end_").strip()
             break
-    
-    content = (res.message.content or "").removeprefix("end_").strip()
+
+        for tc in res.message.tool_calls:
+            name, args = tc.function.name, tc.function.arguments
+            print(f"Calling {name}")
+
+            if name in all_funcs:
+                try:
+                    result = await asyncio.to_thread(all_funcs[name], **args)
+                except Exception as e:
+                    result = f"Error: {e}"
+            else:
+                result = f"Error: unknown tool '{name}'"
+            result = str(result)
+            errors = errors + 1 if result.startswith("Error") else 0
+            
+            if errors >= 4:
+                result += "\nToo many errors in a row. Stop and tell the user what is failing."
+
+            key = (name, json.dumps(args, sort_keys=True, default=str), result)
+            seen[key] = seen.get(key, 0) + 1
+
+            if seen[key] >= 3:
+                result += "\nYou have repeated this exact call 3 times with the same result. Stop and tell the user what is failing."
+
+            print(f"Tool Result: {result}\n")
+            chat_history.append({"role": "tool", "tool_name": name, "content": result})
 
     return {
         "content": content,
         "usage": {
-            "prompt_tokens": total_input_tokens,
-            "completion_tokens": total_output_tokens,
-            "total_tokens": total_input_tokens + total_output_tokens
-        }
+            "prompt_tokens": total_in,
+            "completion_tokens": total_out,
+            "total_tokens": total_in + total_out,
+        },
     }
-
-@app.post('/api/stream')
-def stream_chat(query: Query):
-    global messages
-    messages = trim_chat(msgs=messages)
-    messages.append(Message(role='user', content=query.input))
-    formatted_msgs = [m.model_dump() for m in messages]
-    return StreamingResponse(
-        content=stream_response(model=query.model, msgs=formatted_msgs),
-        media_type='text/event-stream'
-    )

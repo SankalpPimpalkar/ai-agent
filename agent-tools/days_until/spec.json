@@ -1,0 +1,1 @@
+{"properties": {"target_date_str": {"type": "string", "description": "target date str"}}, "required": ["target_date_str"]}

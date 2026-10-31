@@ -14,19 +14,30 @@ tools.append(
         type="function",
         function=Tool.Function(
             name="calculator_tool",
-            description="Perform basic arithmetic on two numbers. After final operations explain the answer naturally",
+            description="""
+                Perform math calculations. Always use this instead of calculating in your head.
+                Two-number operations (op1, operator, op2): + - * / // % ** max min gcd lcm hypot,
+                root (op2-th root of op1), log (op1 with base op2), percent_of (op1 percent of op2),
+                percent_change (change from op1 to op2), round (op1 to op2 decimals).
+                One-number operations (op1, operator, no op2): sqrt abs ln log10 log2 ceil floor factorial,
+                sin cos tan (angle in degrees).
+                For longer expressions, call it step by step and use each result in the next call.
+            """,
             parameters=Tool.Function.Parameters(
                 type="object",
                 properties={
                     "op1": {"type": "float", "description": "First Operand"},
-                    "op2": {"type": "float", "description": "Second Operand"},
+                    "op2": {
+                        "type": "float",
+                        "description": "Second number. Omit for one-number operations like sqrt or factorial",
+                    },
                     "operator": {
                         "type": "string",
                         "enum": list(_OPS.keys()),
-                        "description": "Operator",
+                        "description": "Operation to apply. Two-number: + - * / // % ** max min gcd lcm root (op2-th root of op1) log (op1 with base op2) percent_of (op1 percent of op2) percent_change (from op1 to op2) round (op1 to op2 decimals) hypot. One-number (op2 ignored): sqrt abs ln log10 log2 ceil floor factorial sin cos tan (degrees).",
                     },
                 },
-                required=["op1", "op2", "operator"],
+                required=["op1", "operator"],
             ),
         ),
     )
@@ -105,37 +116,44 @@ tools.append(
         function=Tool.Function(
             name="tool_builder",
             description="""
-                Create, test and run custom Python tools. Use it when no existing tool can do the job.
-                Call list first to reuse an existing tool. For a new tool, call create with a function
-                named exactly like the tool, plus test_code using assert statements, then call test. Only call run after the test passes. Pass run arguments as a JSON string in args. After a failed test, use read and update_lines to fix only the broken lines instead of calling create again. Once a test passes, call register with params so the tool becomes a normal tool. Always pass the same 'name' in every tool_builder call except list. If create or test fails, fix the same tool with read and update_lines. Never create a tool with a different name to work around an error.
+                Build a new reusable Python tool when no existing tool fits the request. Call list first. Steps: create, then test. Once the test passes, the tool is available and you call it directly. Always pass the same name. Fix failures with read and update_lines, never by creating a tool with a different name. The function must be named exactly like the tool, have type hints, and a docstring whose first line starts with "Use when the user asks to ...". 
+                
+                Example create call: {"action": "create", "name": "word_count", "code": "def word_count(text: str) -> str:\n    \"\"\"Use when the user asks to count words.\"\"\"\n    return str(len(text.split()))", "test_code": "assert word_count('a b c') == '3'"}
             """,
             parameters=Tool.Function.Parameters(
                 type="object",
                 properties={
                     "action": {
                         "type": "string",
-                        "enum": ["list", "create", "test", "run"],
+                        "enum": [
+                            "list",
+                            "create",
+                            "test",
+                            "run",
+                            "read",
+                            "update_lines",
+                        ],
                         "description": "Operation to perform",
                     },
                     "name": {
                         "type": "string",
-                        "description": "Tool name in snake_case",
+                        "description": "Tool name in snake_case. Required for every action except list",
                     },
                     "description": {
                         "type": "string",
-                        "description": "One line on what the tool does. Used by create",
+                        "description": "Optional. Defaults to the first line of the function docstring. Used by create",
                     },
                     "code": {
                         "type": "string",
-                        "description": "Python code for tool.py. Used by create",
+                        "description": "Python code. For create it is the full tool.py. For update_lines it is the replacement lines",
                     },
                     "test_code": {
                         "type": "string",
-                        "description": "Python code for test_tool.py. Used by create",
+                        "description": "Python test code using assert statements. Used by create. The import of the tool is added automatically",
                     },
-                    "args": {
+                    "run_args": {
                         "type": "string",
-                        "description": 'JSON object of arguments, e.g. \'{"text": "hi"}\'. Used by run',
+                        "description": "Only for action 'run'. JSON object with the tool's arguments, e.g. '{\"text\": \"hi\"}'. Never use it for create",
                     },
                     "file": {
                         "type": "string",
@@ -149,10 +167,6 @@ tools.append(
                     "end_line": {
                         "type": "integer",
                         "description": "Last line, inclusive. To insert before a line, set end_line to start_line - 1",
-                    },
-                    "params": {
-                        "type": "string",
-                        "description": 'JSON object describing the tool arguments, e.g. \'{"text": {"type": "string", "description": "Text to count"}}\'. Used by register',
                     },
                 },
                 required=["action"],
