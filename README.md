@@ -1,6 +1,6 @@
 # ai-agent
 
-ai-agent is an asynchronous Python service built with FastAPI and Ollama for running local AI agents with autonomous tool execution, code generation, and sandboxed file management. The service provides endpoints for regular chat, streaming responses, and iterative tool loops equipped with loop protection safeguards, token usage accounting, dynamic tool creation via tool_builder, project-scoped workspace commands through cli_tool, and an extended mathematical evaluation engine.
+ai-agent is an asynchronous Python service built with FastAPI and Ollama for running local AI agents with autonomous tool execution, live web search, code generation, and sandboxed file management. The service provides endpoints for regular chat, streaming responses, and iterative tool loops equipped with loop protection safeguards, token usage accounting, dynamic tool creation via tool_builder, project-scoped workspace commands through cli_tool, web search and page fetching capabilities, and a segregated Pydantic-based settings configuration.
 
 ## Table of Contents
 
@@ -8,11 +8,11 @@ ai-agent is an asynchronous Python service built with FastAPI and Ollama for run
 - [Key Features](#key-features)
 - [Core Components](#core-components)
   - [1. Application Server (`src/main.py`)](#1-application-server-srcmainpy)
-  - [2. Configuration and Settings (`src/settings.py`)](#2-configuration-and-settings-srcsettingspy)
+  - [2. Centralized Configuration (`src/settings.py`)](#2-centralized-configuration-srcsettingspy)
   - [3. Data Schemas (`src/schemas.py`)](#3-data-schemas-srcschemaspy)
   - [4. Conversational Memory (`src/memory.py`)](#4-conversational-memory-srcmemorypy)
   - [5. Utilities and History Management (`src/utils.py`)](#5-utilities-and-history-management-srcutilspy)
-  - [6. Tool Registry (`src/tools/__init__.py`)](#6-tool-registry-srctools__init__py)
+  - [6. Tool Registry and Web Capabilities (`src/tools/__init__.py`)](#6-tool-registry-and-web-capabilities-srctools__init__py)
   - [7. Dynamic Tool Builder (`src/tools/tool_builder.py`)](#7-dynamic-tool-builder-srctoolstool_builderpy)
   - [8. CLI and Project File Manager (`src/tools/cli.py`)](#8-cli-and-project-file-manager-srctoolsclipy)
   - [9. Extended Calculator Tool (`src/tools/calculator.py`)](#9-extended-calculator-tool-srctoolscalculatorpy)
@@ -20,6 +20,7 @@ ai-agent is an asynchronous Python service built with FastAPI and Ollama for run
 - [Installation & Setup](#installation--setup)
   - [Prerequisites](#prerequisites)
   - [Clone and Environment Setup](#clone-and-environment-setup)
+  - [Environment Configuration](#environment-configuration)
   - [Dependency Installation](#dependency-installation)
 - [Usage Examples](#usage-examples)
   - [1. Server Startup](#1-server-startup)
@@ -34,16 +35,17 @@ ai-agent is an asynchronous Python service built with FastAPI and Ollama for run
   - [Milestone 4: CLI File Management and Tool Integration](#milestone-4-cli-file-management-and-tool-integration)
   - [Milestone 5: Project Isolation and Dynamic Tool Builder](#milestone-5-project-isolation-and-dynamic-tool-builder)
   - [Milestone 6: Calculator Enhancements, Loop Safeguards, and Modular Segregation](#milestone-6-calculator-enhancements-loop-safeguards-and-modular-segregation)
+  - [Milestone 7: Pydantic Settings Management and Web Search Tooling](#milestone-7-pydantic-settings-management-and-web-search-tooling)
 
 ## Project Overview
 
-Building reliable autonomous agents requires combining local language models with deterministic tools, bounded execution limits, and strict workspace isolation. This project demonstrates how an agent can iteratively reason, execute code, build its own missing tools, and manage file systems without entering infinite execution loops or compromising system security.
+Building reliable autonomous agents requires combining local language models with deterministic tools, bounded execution limits, live information retrieval, and strict workspace isolation. This project demonstrates how an agent can iteratively reason, execute code, retrieve current web content, build its own missing tools, and manage file systems without entering infinite execution loops or compromising system security.
 
-1. **Modular Code Architecture**: Separates configuration, schemas, memory, utilities, API routing, and tools into discrete modules.
-2. **Bounded Execution Loop**: Limits tool calling iterations to 25 steps with automatic circuit breakers for repeated queries and consecutive errors.
-3. **Dynamic Self-Extending Tooling**: Enables the agent to inspect existing capabilities, generate new Python tools with AST verification, execute test suites, and load passed tools dynamically.
-4. **Sandboxed Project Operations**: Confines file creation, line edits, directory inspection, and command execution within project-scoped directories under an artifacts root.
-5. **Accurate Computation**: Offloads mathematical and analytical tasks to an extended calculation module and dedicated tools.
+1. **Segregated Pydantic Configuration**: Uses `pydantic-settings` to parse `.env` files and expose cached Ollama clients with bearer authentication.
+2. **Web Information Retrieval**: Integrates Ollama web search and page fetch capabilities for real-time external data retrieval.
+3. **Bounded Execution Loop**: Limits tool calling iterations to 25 steps with automatic circuit breakers for repeated queries and consecutive errors.
+4. **Dynamic Self-Extending Tooling**: Enables the agent to inspect existing capabilities, generate new Python tools with AST verification, execute test suites, and load passed tools dynamically.
+5. **Sandboxed Project Operations**: Confines file creation, line edits, directory inspection, and command execution within project-scoped directories under an artifacts root.
 
 ## Key Features
 
@@ -51,6 +53,12 @@ Building reliable autonomous agents requires combining local language models wit
   - Direct JSON chat via `/api/chat` returning assistant replies alongside token usage statistics.
   - Server-Sent Events stream through `/api/stream` with `text/event-stream` media type.
   - Autonomous multi-step tool reasoning through `/api/tool`.
+- **Live Web Search and Content Fetching**:
+  - Live query search via `web_search` returning titles, URLs, and snippet contents.
+  - Full webpage content retrieval via `web_fetch` returning page titles, full text, and outbound links.
+- **Structured Settings Management**:
+  - Pydantic `BaseSettings` reading from `.env` with environment variable overrides.
+  - Automated cached instantiation of authenticated `Client` with `OLLAMA_API_KEY`.
 - **Execution Safeguards and Loop Controls**:
   - Loop boundary constrained to 25 iterations.
   - Repeated call detector halting cycles when the same function, arguments, and result occur 3 times.
@@ -75,14 +83,15 @@ Building reliable autonomous agents requires combining local language models wit
 
 ### 1. Application Server (`src/main.py`)
 
-Initializes the FastAPI application and HTTP endpoints. Coordinates context trimming, dynamic tool aggregation, model querying with context size `8192`, thread-dispatched function calls, loop breakers, and aggregated token accounting.
+Initializes the FastAPI application and HTTP endpoints. Coordinates context trimming, dynamic tool aggregation, model querying using the authenticated `SETTINGS.OLLAMA_CLIENT` with context size `8192`, thread-dispatched function calls, loop breakers, and aggregated token accounting.
 
 | Endpoint / Object | Implementation | Behavior |
 | :--- | :--- | :--- |
 | `app` | `FastAPI()` | Core application instance. |
+| `client` | `SETTINGS.OLLAMA_CLIENT` | Authenticated client instance reused across requests. |
 | `/api/chat` | `@app.post("/api/chat")` | Executes single-turn chat completion and returns response content with input, output, and total token usage. |
 | `/api/stream` | `@app.post("/api/stream")` | Yields real-time token chunks over HTTP `text/event-stream` using `StreamingResponse`. |
-| `/api/tool` | `@app.post("/api/tool")` | Manages tool execution loop up to 25 turns, discovers custom tools, runs tool functions in worker threads, and enforces loop breakers. |
+| `/api/tool` | `@app.post("/api/tool")` | Manages tool execution loop up to 25 turns, discovers custom tools, logs thinking traces and tool calls, runs tool functions in worker threads, and enforces loop breakers. |
 
 ```python
 @app.post("/api/tool")
@@ -99,43 +108,66 @@ async def tool_chat(query: Query):
         all_funcs = {**functions, **custom_funcs}
         formatted_msgs = [m if isinstance(m, dict) else m.model_dump() for m in chat_history]
 
-        res: ChatResponse = await client.chat(
+        res: ChatResponse = client.chat(
             model=query.model,
             messages=formatted_msgs,
             tools=all_tools,
-            think=THINKING_MODEL,
+            think=SETTINGS.THINKING,
             options={"num_ctx": 8192},
         )
         chat_history.append(res.message)
         total_in += res.prompt_eval_count or 0
         total_out += res.eval_count or 0
 
+        if res.message.thinking:
+            print("Thinking:\n", res.message.thinking)
+
+        if res.message.content:
+            print("Content:\n", res.message.content)
+
         if not res.message.tool_calls:
             content = (res.message.content or "").removeprefix("end_").strip()
             break
 ```
 
-### 2. Configuration and Settings (`src/settings.py`)
+### 2. Centralized Configuration (`src/settings.py`)
 
-Centralizes runtime environment constants, model defaults, prompt sources, and storage directory names.
+Centralizes runtime environment constants, model defaults, prompt sources, and storage directory names using `pydantic-settings`. Automatically reads from `.env` and exposes a cached authenticated client.
 
 | Setting | Implementation | Behavior |
 | :--- | :--- | :--- |
+| `OLLAMA_API_KEY` | `str` | API key required for bearer authentication in Ollama client requests. |
 | `DEFAULT_MODEL` | `str = "gemma4:12b"` | Default Ollama model identifier. |
-| `THINKING_MODEL` | `bool = True` | Enables reasoning/thinking traces during model calls. |
-| `SYSTEM_PROMPT` | `open("./system-prompt.txt").read()` | Loads base instructions, project rules, testing constraints, and tool usage guidelines. |
+| `THINKING` | `bool = True` | Enables reasoning/thinking traces during model calls. |
 | `ARTIFACTS_FOLDER_NAME` | `str = "artifacts"` | Root directory where `cli_tool` manages project folders. |
 | `AGENT_TOOLS_FOLDER_NAME` | `str = "agent-tools"` | Root directory where `tool_builder` stores generated tools and specs. |
+| `SYSTEM_PROMPT` | `Field(default_factory=...)` | Reads agent instructions and rules from `system-prompt.txt`. |
+| `OLLAMA_CLIENT` | `@cached_property` | Instantiates and caches an authenticated Ollama `Client` with bearer headers. |
 
 ```python
-# MODEL CONFIGURATIONS
-DEFAULT_MODEL = "gemma4:12b"
-THINKING_MODEL = True
-SYSTEM_PROMPT = open("./system-prompt.txt", "r").read()
+from pydantic_settings import BaseSettings, SettingsConfigDict
+from functools import cached_property
+from ollama import Client
+from pydantic import Field
+from pathlib import Path
 
-# TOOLS CONFIGURATIONS
-ARTIFACTS_FOLDER_NAME = "artifacts"
-AGENT_TOOLS_FOLDER_NAME = "agent-tools"
+BASE_DIR = Path(__file__).resolve().parent.parent
+
+class Settings(BaseSettings):
+    OLLAMA_API_KEY: str
+    DEFAULT_MODEL: str = "gemma4:12b"
+    THINKING: bool = True
+    ARTIFACTS_FOLDER_NAME: str = "artifacts"
+    AGENT_TOOLS_FOLDER_NAME: str = "agent-tools"
+    SYSTEM_PROMPT: str = Field(default_factory=lambda: (BASE_DIR / "system-prompt.txt").read_text())
+
+    model_config = SettingsConfigDict(env_file=BASE_DIR / ".env", extra="ignore")
+
+    @cached_property
+    def OLLAMA_CLIENT(self) -> Client:
+        return Client(headers={"Authorization": f"Bearer {self.OLLAMA_API_KEY}"})
+
+SETTINGS = Settings()
 ```
 
 ### 3. Data Schemas (`src/schemas.py`)
@@ -144,15 +176,15 @@ Defines Pydantic models for request validation and structured message representa
 
 | Schema | Implementation | Behavior |
 | :--- | :--- | :--- |
-| `Query` | `BaseModel` | Validates API inputs, defaulting `model` to `DEFAULT_MODEL` when omitted. |
+| `Query` | `BaseModel` | Validates API inputs, defaulting `model` to `SETTINGS.DEFAULT_MODEL` when omitted. |
 | `Message` | `BaseModel` | Stores chat messages with `role` and `content` fields. |
 
 ```python
 from pydantic import BaseModel, Field
-from .settings import DEFAULT_MODEL
+from .settings import SETTINGS
 
 class Query(BaseModel):
-    model: str = Field(default=DEFAULT_MODEL)
+    model: str = Field(default=SETTINGS.DEFAULT_MODEL)
     input: str
 
 class Message(BaseModel):
@@ -162,18 +194,18 @@ class Message(BaseModel):
 
 ### 4. Conversational Memory (`src/memory.py`)
 
-Maintains the persistent in-memory conversation list across agent turns, seeded with the externalized system prompt.
+Maintains the persistent in-memory conversation list across agent turns, seeded with the externalized system prompt from settings.
 
 | Variable | Implementation | Behavior |
 | :--- | :--- | :--- |
-| `messages` | `List[Message]` | Stores active conversation turns initialized with `role="system"` containing `SYSTEM_PROMPT`. |
+| `messages` | `List[Message]` | Stores active conversation turns initialized with `role="system"` containing `SETTINGS.SYSTEM_PROMPT`. |
 
 ```python
 from typing import List
-from .settings import SYSTEM_PROMPT
+from .settings import SETTINGS
 from ollama import Message
 
-messages: List[Message] = [Message(role="system", content=SYSTEM_PROMPT)]
+messages: List[Message] = [Message(role="system", content=SETTINGS.SYSTEM_PROMPT)]
 ```
 
 ### 5. Utilities and History Management (`src/utils.py`)
@@ -197,31 +229,83 @@ def trim_chat(max_messages: int = 20):
     messages[:] = [system_prompt] + chat
 ```
 
-### 6. Tool Registry (`src/tools/__init__.py`)
+### 6. Tool Registry and Web Capabilities (`src/tools/__init__.py`)
 
-Assembles the static tool specifications and runtime dispatch dictionary passed into Ollama requests.
+Assembles static tool specifications and runtime dispatch functions passed into Ollama requests, including live web search and webpage fetching.
 
-| Registry Element | Implementation | Behavior |
+| Tool / Function | Implementation | Behavior |
 | :--- | :--- | :--- |
-| `tools` | `List[Tool]` | Contains Ollama `Tool` declarations for `calculator_tool`, `cli_tool`, and `tool_builder`. |
-| `functions` | `Dict[str, function]` | Maps tool names to executable Python functions for runtime dispatch. |
+| `web_search` | `SETTINGS.OLLAMA_CLIENT.web_search` | Searches the web for query terms with configurable `max_results` (default 5, max 10) returning title, url, and content snippet. |
+| `web_fetch` | `SETTINGS.OLLAMA_CLIENT.web_fetch` | Fetches webpage contents from a full URL, returning title, text content, and extracted links. |
+| `calculator_tool` | `calculator_tool` | Evaluates arithmetic, logarithmic, and trigonometric calculations. |
+| `cli_tool` | `cli_tool` | Executes sandboxed project commands and manages files within `artifacts/`. |
+| `tool_builder` | `tool_builder` | Dynamically creates, tests, reads, updates, and runs custom Python tools. |
 
 ```python
-from ollama import Tool
+from ollama import Tool, web_fetch, web_search
 from typing import List, Dict
 from .calculator import _OPS, calculator_tool
 from .tool_builder import tool_builder
 from .cli import cli_tool
-from src.settings import ARTIFACTS_FOLDER_NAME
+from src.settings import SETTINGS
 
 tools: List[Tool] = []
 functions: Dict[str, function] = {}
 
-functions["calculator_tool"] = calculator_tool
-...
-functions["cli_tool"] = cli_tool
-...
-functions["tool_builder"] = tool_builder
+functions["web_search"] = SETTINGS.OLLAMA_CLIENT.web_search
+tools.append(
+    Tool(
+        type="function",
+        function=Tool.Function(
+            name="web_search",
+            description="""
+                Search the web for current information. Use this for recent events,
+                facts you are unsure about, or anything that may have changed.
+                Returns a list of results with title, url and content snippet.
+            """,
+            parameters=Tool.Function.Parameters(
+                type="object",
+                properties={
+                    "query": {
+                        "type": "string",
+                        "description": "Search query. Keep it short and specific.",
+                    },
+                    "max_results": {
+                        "type": "integer",
+                        "description": "Number of results to return (default 5, max 10).",
+                    },
+                },
+                required=["query"],
+            ),
+        ),
+    )
+)
+
+functions["web_fetch"] = SETTINGS.OLLAMA_CLIENT.web_fetch
+tools.append(
+    Tool(
+        type="function",
+        function=Tool.Function(
+            name="web_fetch",
+            description="""
+                Fetch the full content of a web page from a URL.
+                Use this after web_search when the snippet is not enough,
+                or when the user gives you a URL.
+                Returns the page title, content and links.
+            """,
+            parameters=Tool.Function.Parameters(
+                type="object",
+                properties={
+                    "url": {
+                        "type": "string",
+                        "description": "Full URL including https://",
+                    },
+                },
+                required=["url"],
+            ),
+        ),
+    )
+)
 ```
 
 ### 7. Dynamic Tool Builder (`src/tools/tool_builder.py`)
@@ -343,6 +427,7 @@ def calculator_tool(op1: float, operator: str, op2: float = 0.0) -> str:
 
 ```text
 ai-agent/
+├── .env.sample                       # Template for environment configuration
 ├── Makefile                          # Development task automation commands
 ├── README.md                         # Project documentation
 ├── requirements.txt                  # Python package dependencies
@@ -368,10 +453,10 @@ ai-agent/
     ├── main.py                       # FastAPI application, tool loop, and HTTP route handlers
     ├── memory.py                     # Global chat history storage and initialization
     ├── schemas.py                    # Pydantic input and output request schemas
-    ├── settings.py                   # Model configuration, prompts, and folder constants
+    ├── settings.py                   # Pydantic BaseSettings configuration and client provider
     ├── utils.py                      # Streaming generators and conversation trimming logic
     └── tools/
-        ├── __init__.py               # Tool registry importing static tools and schemas
+        ├── __init__.py               # Tool registry importing static tools, web search, and schemas
         ├── calculator.py             # Extended arithmetic, unary, and binary math tool
         ├── cli.py                    # Project-scoped CLI runner and safe file manager
         └── tool_builder.py           # Custom tool generator, AST parser, and test runner
@@ -418,13 +503,35 @@ On Windows (Command Prompt):
 .venv\Scripts\activate
 ```
 
+### Environment Configuration
+
+Create a local `.env` configuration file from the template:
+
+```bash
+cp .env.sample .env
+```
+
+Configure your environment values in `.env`:
+
+```env
+# OLLAMA CONFIGURATIONS
+OLLAMA_API_KEY="your-api-key-here"
+
+# MODEL CONFIGURATIONS
+DEFAULT_MODEL="gemma4:12b"
+THINKING_MODEL=True
+
+# TOOLS CONFIGURATIONS
+ARTIFACTS_FOLDER_NAME="artifacts"
+AGENT_TOOLS_FOLDER_NAME="agent-tools"
+```
+
 ### Dependency Installation
 
-Install dependencies from `requirements.txt` and ensure `ollama` is installed:
+Install dependencies from `requirements.txt`:
 
 ```bash
 pip install -r requirements.txt
-pip install ollama
 ```
 
 ## Usage Examples
@@ -457,13 +564,13 @@ curl -X POST http://localhost:8000/api/chat \
 
 ### 3. Autonomous Tool-Assisted Execution
 
-Query `/api/tool` to execute multi-step requests involving math calculations, project scaffolding, or dynamic tool construction:
+Query `/api/tool` to execute multi-step requests involving math calculations, web searches, project scaffolding, or dynamic tool construction:
 
 ```bash
 curl -X POST http://localhost:8000/api/tool \
   -H "Content-Type: application/json" \
   -d '{
-    "input": "Calculate the hypotenuse of a right triangle with sides 9 and 12, then calculate 15 percent of 400."
+    "input": "Search the web for the latest Python release date and summarize the findings."
   }'
 ```
 
@@ -482,7 +589,9 @@ curl -X POST http://localhost:8000/api/stream \
 
 ## How It Works
 
-1. **Context Initialization and Normalization**: In-memory history in `src/memory.py` starts with `SYSTEM_PROMPT`. On each request, `trim_chat` truncates history to the latest turns while ensuring the post-system message is a user message.
+1. **Settings and Client Initialization**: `src/settings.py` instantiates `SETTINGS` using `pydantic-settings`, parsing `.env` file variables. The cached property `OLLAMA_CLIENT` configures bearer authentication using `OLLAMA_API_KEY`.
+
+2. **Context Initialization and Normalization**: In-memory history in `src/memory.py` starts with `SETTINGS.SYSTEM_PROMPT`. On each request, `trim_chat` truncates history to the latest turns while ensuring the post-system message is a user message.
    ```python
    def trim_chat(max_messages: int = 20):
        system_prompt = messages[0]
@@ -491,28 +600,27 @@ curl -X POST http://localhost:8000/api/stream \
            chat = chat[-max_messages:]
            while chat and _role(chat[0]) != "user":
                chat.pop(0)
-       messages[:] = [system_prompt] + chat
    ```
 
-2. **Dynamic Tool Resolution**: At every iteration in `/api/tool`, `load_custom_tools` scans `agent-tools/` for validated custom tools and aggregates them with static tools.
+3. **Dynamic Tool and Web Tool Resolution**: In `/api/tool`, static tools (including `web_search` and `web_fetch`) are merged with dynamic tools discovered by `load_custom_tools`.
    ```python
    custom_tools, custom_funcs = load_custom_tools()
    all_tools = tools + custom_tools
    all_funcs = {**functions, **custom_funcs}
    ```
 
-3. **Model Request with Context Budget**: The server submits the conversation and tools to `client.chat` with `think=THINKING_MODEL` and `options={"num_ctx": 8192}`.
+4. **Model Request with Context Budget**: The server submits the conversation and aggregated tools to `client.chat` with `think=SETTINGS.THINKING` and `options={"num_ctx": 8192}`.
    ```python
-   res: ChatResponse = await client.chat(
+   res: ChatResponse = client.chat(
        model=query.model,
        messages=formatted_msgs,
        tools=all_tools,
-       think=THINKING_MODEL,
+       think=SETTINGS.THINKING,
        options={"num_ctx": 8192},
    )
    ```
 
-4. **Thread-Safe Dispatch and Circuit Breakers**: If tool calls are returned, functions are executed in worker threads via `asyncio.to_thread`. Execution output is monitored:
+5. **Thread-Safe Dispatch and Circuit Breakers**: If tool calls are returned, functions are executed in worker threads via `asyncio.to_thread`. Execution output is monitored:
    - If an identical call repeats 3 times, an instruction stops looping.
    - If 4 consecutive tool errors occur, the loop halts with an error notice.
    ```python
@@ -528,7 +636,7 @@ curl -X POST http://localhost:8000/api/stream \
        result += "\nYou have repeated this exact call 3 times with the same result. Stop and tell the user what is failing."
    ```
 
-5. **Loop Termination**: When the model finishes tool calls or the loop reaches the 25-turn cap, the final response is returned with token usage totals.
+6. **Loop Termination**: When the model finishes tool calls or the loop reaches the 25-turn cap, the final response is returned with token usage totals.
 
 ## Project Roadmap & Commit History
 
@@ -573,3 +681,12 @@ curl -X POST http://localhost:8000/api/stream \
   - Added loop protection mechanisms: repeated call breaker (`seen >= 3`) and consecutive error limiter (`errors >= 4`).
   - Added dynamic tool loader (`load_custom_tools`) in `src/tools/tool_builder.py` scanning `agent-tools/`.
   - Segregated conversation state into `src/memory.py` and helper functions into `src/utils.py`.
+
+### Milestone 7: Pydantic Settings Management and Web Search Tooling
+
+- `036acc2`: feat: refactor settings management and enhance tool functionalities with new web search and fetch capabilities
+  - Refactored `src/settings.py` to use `pydantic_settings.BaseSettings` with environment variable loading and cached client properties.
+  - Added `.env.sample` defining environment variables including `OLLAMA_API_KEY`.
+  - Integrated `web_search` and `web_fetch` from `SETTINGS.OLLAMA_CLIENT` into `src/tools/__init__.py`.
+  - Added terminal logging for thinking traces and tool calls in `src/main.py`.
+  - Added `ollama==0.6.3` into `requirements.txt`.
