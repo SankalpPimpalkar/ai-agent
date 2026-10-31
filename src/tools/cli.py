@@ -3,7 +3,7 @@ import re
 import shutil
 import subprocess
 from pathlib import Path
-from src.settings import ARTIFACTS_FOLDER_NAME
+from src.settings import SETTINGS
 
 BLACK_LISTED = {
     "rm",
@@ -36,6 +36,7 @@ BLACK_LISTED = {
     "exec",
 }
 
+ARTIFACTS_FOLDER_NAME = SETTINGS.ARTIFACTS_FOLDER_NAME
 ROOT = (Path.cwd() / ARTIFACTS_FOLDER_NAME).resolve()
 ALLOWED_BINARIES = {"npm", "npx", "pnpm", "yarn", "git", "node", "pip", "python"}
 SHELL_META = re.compile(r"[;&|`$<>\n\r]")

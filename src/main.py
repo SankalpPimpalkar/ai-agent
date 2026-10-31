@@ -3,7 +3,7 @@ from fastapi import FastAPI
 from fastapi.responses import StreamingResponse
 from .tools import tools, functions
 from .tools.tool_builder import load_custom_tools
-from .settings import THINKING_MODEL
+from .settings import SETTINGS
 from .utils import stream_response, trim_chat
 from .memory import messages as chat_history
 from .schemas import Query
@@ -11,7 +11,7 @@ import asyncio
 import json
 
 app = FastAPI()
-client = AsyncClient()
+client = SETTINGS.OLLAMA_CLIENT
 
 @app.post("/api/stream")
 def stream_chat(query: Query):
@@ -30,7 +30,7 @@ async def normal_chat(query: Query):
     chat_history.append(Message(role="user", content=query.input))
     formatted_msgs = [m.model_dump() for m in chat_history]
 
-    res: ChatResponse = await client.chat(
+    res: ChatResponse = client.chat(
         model=query.model,
         messages=formatted_msgs,
     )
@@ -60,24 +60,32 @@ async def tool_chat(query: Query):
         all_funcs = {**functions, **custom_funcs}
         formatted_msgs = [m if isinstance(m, dict) else m.model_dump() for m in chat_history]
 
-        res: ChatResponse = await client.chat(
+        res: ChatResponse = client.chat(
             model=query.model,
             messages=formatted_msgs,
             tools=all_tools,
-            think=THINKING_MODEL,
+            think=SETTINGS.THINKING,
             options={"num_ctx": 8192},
         )
         chat_history.append(res.message)
         total_in += res.prompt_eval_count or 0
         total_out += res.eval_count or 0
 
+        if res.message.thinking:
+            print("Thinking:\n", res.message.thinking)
+
+        if res.message.content:
+            print("Content:\n", res.message.content)
+
         if not res.message.tool_calls:
             content = (res.message.content or "").removeprefix("end_").strip()
             break
 
+        if res.message.tool_calls:
+            print("Tool Calls:\n", res.message.tool_calls)
+
         for tc in res.message.tool_calls:
             name, args = tc.function.name, tc.function.arguments
-            print(f"Calling {name}")
 
             if name in all_funcs:
                 try:
@@ -98,7 +106,7 @@ async def tool_chat(query: Query):
             if seen[key] >= 3:
                 result += "\nYou have repeated this exact call 3 times with the same result. Stop and tell the user what is failing."
 
-            print(f"Tool Result: {result}\n")
+            print("Tool Result:\n", result)
             chat_history.append({"role": "tool", "tool_name": name, "content": result})
 
     return {

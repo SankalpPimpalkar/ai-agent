@@ -5,7 +5,7 @@ from .memory import messages
 
 async def stream_response(client: AsyncClient, model: str, msgs: List[Message]):
     try:
-        stream: ChatResponse = await client.chat(
+        stream: ChatResponse = client.chat(
             model=model, messages=msgs, stream=True
         )
         full_response = ""

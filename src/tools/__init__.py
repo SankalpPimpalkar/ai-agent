@@ -1,12 +1,69 @@
-from ollama import Tool
+from ollama import Tool, web_fetch, web_search
 from typing import List, Dict
 from .calculator import _OPS, calculator_tool
 from .tool_builder import tool_builder
 from .cli import cli_tool
-from src.settings import ARTIFACTS_FOLDER_NAME
+from src.settings import SETTINGS
+
+ARTIFACTS_FOLDER_NAME = SETTINGS.ARTIFACTS_FOLDER_NAME
 
 tools: List[Tool] = []
 functions: Dict[str, function] = {}
+
+functions["web_search"] = SETTINGS.OLLAMA_CLIENT.web_search
+tools.append(
+    Tool(
+        type="function",
+        function=Tool.Function(
+            name="web_search",
+            description="""
+                Search the web for current information. Use this for recent events,
+                facts you are unsure about, or anything that may have changed.
+                Returns a list of results with title, url and content snippet.
+            """,
+            parameters=Tool.Function.Parameters(
+                type="object",
+                properties={
+                    "query": {
+                        "type": "string",
+                        "description": "Search query. Keep it short and specific.",
+                    },
+                    "max_results": {
+                        "type": "integer",
+                        "description": "Number of results to return (default 5, max 10).",
+                    },
+                },
+                required=["query"],
+            ),
+        ),
+    )
+)
+
+functions["web_fetch"] = SETTINGS.OLLAMA_CLIENT.web_fetch
+tools.append(
+    Tool(
+        type="function",
+        function=Tool.Function(
+            name="web_fetch",
+            description="""
+                Fetch the full content of a web page from a URL.
+                Use this after web_search when the snippet is not enough,
+                or when the user gives you a URL.
+                Returns the page title, content and links.
+            """,
+            parameters=Tool.Function.Parameters(
+                type="object",
+                properties={
+                    "url": {
+                        "type": "string",
+                        "description": "Full URL including https://",
+                    },
+                },
+                required=["url"],
+            ),
+        ),
+    )
+)
 
 functions["calculator_tool"] = calculator_tool
 tools.append(
@@ -33,7 +90,7 @@ tools.append(
                     },
                     "operator": {
                         "type": "string",
-                        "enum": list(_OPS.keys()),
+                        "enum": _OPS,
                         "description": "Operation to apply. Two-number: + - * / // % ** max min gcd lcm root (op2-th root of op1) log (op1 with base op2) percent_of (op1 percent of op2) percent_change (from op1 to op2) round (op1 to op2 decimals) hypot. One-number (op2 ignored): sqrt abs ln log10 log2 ceil floor factorial sin cos tan (degrees).",
                     },
                 },

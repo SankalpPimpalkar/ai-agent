@@ -35,6 +35,7 @@ UNARY = {
     "tan": lambda a: math.tan(math.radians(a)),
 }
 
+_OPS = list(BINARY.keys()) + list(UNARY.keys())
 
 def _fmt(x) -> str:
     if isinstance(x, float):

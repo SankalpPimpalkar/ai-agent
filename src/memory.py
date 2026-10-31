@@ -1,6 +1,5 @@
 from typing import List
-# from .schemas import Message
-from .settings import SYSTEM_PROMPT
+from .settings import SETTINGS
 from ollama import Message
 
-messages: List[Message] = [Message(role="system", content=SYSTEM_PROMPT)]
+messages: List[Message] = [Message(role="system", content=SETTINGS.SYSTEM_PROMPT)]
