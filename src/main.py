@@ -4,8 +4,8 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from typing import List
 from .tools import tools, functions
+from .tools.tool_builder import load_custom_tools
 from .settings import DEFAULT_MODEL, SYSTEM_PROMPT, THINKING_MODEL
-
 class Query(BaseModel):
     model: str = Field(default=DEFAULT_MODEL)
     input: str
@@ -76,14 +76,19 @@ async def tool_chat(query: Query):
     total_input_tokens = 0
     total_output_tokens = 0
 
-    while True:
+    for _ in range(15):
+        custom_tools, custom_funcs = load_custom_tools()
+        all_tools = tools + custom_tools
+        all_funcs = {**functions, **custom_funcs}
         formatted_msgs = []
+
         for m in messages:
             formatted_msgs.append(m if isinstance(m, dict) else m.model_dump())
+
         res: ChatResponse = await client.chat(
             model=query.model, 
             messages=formatted_msgs,
-            tools=tools,
+            tools=all_tools,
             think=THINKING_MODEL
         )
         messages.append(res.message)
@@ -93,16 +98,21 @@ async def tool_chat(query: Query):
         if res.message.tool_calls:
             for tc in res.message.tool_calls:
                 name, args = tc.function.name, tc.function.arguments
-                if name in functions:
-                    print(f"Calling {name}({args})")
-                    res = functions[name](**args)
+                if name in all_funcs:
+                    print(f"Calling {name}({args})\n")
+                    res = all_funcs[name](**args)
                     # print(f"Tool Result: {str(res)}")
-                    messages.append({"role": "tool","content": str(res)})
+                else:
+                    res = f"Error: unknown tool '{name}'"
+                messages.append({"role": "tool","content": str(res)})
             continue
         else:
             break
+    
+    content = (res.message.content or "").removeprefix("end_").strip()
+
     return {
-        "content": res.message.content,
+        "content": content,
         "usage": {
             "prompt_tokens": total_input_tokens,
             "completion_tokens": total_output_tokens,

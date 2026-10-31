@@ -1,5 +1,8 @@
-
-# DEFAULT_MODEL = "gemma4:12b"
-DEFAULT_MODEL = "qwen2.5:7b" 
-THINKING_MODEL = False
+# MODEL CONFIGURATIONS
+DEFAULT_MODEL = "gemma4:12b"
+THINKING_MODEL = True
 SYSTEM_PROMPT = open("./system-prompt.txt", "r").read()
+
+# TOOLS CONFIGURATIONS
+ARTIFACTS_FOLDER_NAME = "artifacts"
+AGENT_TOOLS_FOLDER_NAME = "agent-tools"
