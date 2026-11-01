@@ -1,9 +1,10 @@
 from typing import List
-from .schemas import Message
-from ollama import AsyncClient, ChatResponse
-from .memory import messages
+from .schemas import Query
+from ollama import AsyncClient, ChatResponse, Message
+from .memory import messages, memory_pass
+import asyncio
 
-async def stream_response(client: AsyncClient, model: str, msgs: List[Message]):
+async def stream_response(client: AsyncClient, model: str, msgs: List[Message], query: Query):
     try:
         stream: ChatResponse = client.chat(
             model=model, messages=msgs, stream=True
@@ -16,6 +17,7 @@ async def stream_response(client: AsyncClient, model: str, msgs: List[Message]):
             yield out
 
         messages.append(Message(role="assistant", content=full_response))
+        asyncio.create_task(memory_pass(query.input, full_response))
     except Exception as e:
         yield f"\n[Error: {str(e)}]"
 

@@ -1,0 +1,1 @@
+{"properties": {"total_days": {"type": "integer", "description": "total days"}}, "required": ["total_days"]}

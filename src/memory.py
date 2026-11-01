@@ -1,86 +1,44 @@
 from typing import List
 from ollama import Message
-from .settings import SETTINGS, BASE_DIR
-
-MEMORY_FILE = BASE_DIR / "memory.txt"
-SUMMARY_TAG = "[CONVERSATION SUMMARY]"
+from .settings import SETTINGS
+from .tools.memory import memory_index, memory_tool
+from .tools import memory_tool_spec
+import asyncio
 
 messages: List[Message] = [Message(role="system", content=SETTINGS.SYSTEM_PROMPT)]
 
+def build_messages():
+    global messages
 
-def _role(m):
-    return m["role"] if isinstance(m, dict) else m.role
+    system = {
+        'role': 'system',
+        'content': f"{SETTINGS.SYSTEM_PROMPT}\n\nYour Memory Files:\n{memory_index()}"
+    }
+    rest = [m if isinstance(m, dict) else m.model_dump() for m in messages[1:]]
+    return [system] + rest
 
-
-def _content(m):
-    return (m["content"] if isinstance(m, dict) else m.content) or ""
-
-
-def _is_summary(m):
-    return _role(m) == "system" and _content(m).startswith(SUMMARY_TAG)
-
-
-def _summary_message(text: str) -> Message:
-    return Message(role="system", content=f"{SUMMARY_TAG}\n{text}")
-
-
-def load_memory():
-    if MEMORY_FILE.exists():
-        text = MEMORY_FILE.read_text(encoding="utf-8").strip()
-        if text:
-            messages.insert(1, _summary_message(text))
-
-
-def _summarize(previous: str, old_chat: List[Message]) -> str:
-    chat_text = "\n".join(f"{_role(m)}: {_content(m)[:500]}" for m in old_chat)
-
+async def memory_pass(user_msg: str, assistant_msg: str):
     prompt = (
-        "Update the memory summary below using the new conversation part.\n"
-        "Keep user facts, decisions, preferences, open tasks, and important tool results.\n"
-        "Drop small talk. Max 300 words. Return only the summary.\n\n"
-        f"CURRENT SUMMARY:\n{previous or '(empty)'}\n\n"
-        f"NEW CONVERSATION:\n{chat_text}"
+        "You manage the agent's long-term memory.\n"
+        f"Current memory files:\n{memory_index()}\n\n"
+        "Does this exchange contain anything worth saving (personal info, preferences, "
+        "decisions, what the user is learning, topics asked)? "
+        "If yes, use memory_tool (update an existing file if one fits). "
+        "If not, reply NONE.\n\n"
+        f"User: {user_msg}\nAssistant: {assistant_msg}"
     )
-    res = SETTINGS.OLLAMA_CLIENT.chat(
-        model=SETTINGS.DEFAULT_MODEL,
-        messages=[{"role": "user", "content": prompt}],
-    )
-    return res.message.content.strip()
+    msgs: List[Message] = [{"role": "user", "content": prompt}]
 
-
-def summarize(max_length: int = 20):
-    system_prompt = messages[0]
-    chat_history = messages[1:]
-    recent_chat = []
-    previous = ""
-
-    if chat_history and _is_summary(chat_history[0]):
-        previous = _content(chat_history[0]).removeprefix(SUMMARY_TAG).strip()
-        chat_history = chat_history[1:]
-
-    if len(chat_history) < max_length:
-        return
-
-    if _role(chat_history[-1]) == "user":
-        recent_chat.append(chat_history.pop())
-
-    while chat_history and _role(chat_history[-1]) != "user":
-        recent_chat.append(chat_history.pop())
-
-    if chat_history:
-        recent_chat.append(chat_history.pop())
-    recent_chat.reverse()
-
-    if not chat_history:
-        return
-
-    try:
-        new_summary = _summarize(previous, chat_history)
-    except Exception as e:
-        print("Summarize failed:", e)
-        return
-
-    MEMORY_FILE.write_text(new_summary, encoding="utf-8")
-    messages[:] = [system_prompt, _summary_message(new_summary), *recent_chat]
-
-load_memory()
+    for _ in range(5):
+        res = await asyncio.to_thread(
+            SETTINGS.OLLAMA_CLIENT.chat,
+            model=SETTINGS.DEFAULT_MODEL,
+            messages=msgs,
+            tools=[memory_tool_spec],
+        )
+        msgs.append(res.message)
+        if not res.message.tool_calls:
+            return
+        for call in res.message.tool_calls:
+            result = memory_tool(**call.function.arguments)
+            msgs.append({"role": "tool", "content": result})

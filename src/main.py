@@ -5,7 +5,7 @@ from .tools import tools, functions
 from .tools.tool_builder import load_custom_tools
 from .settings import SETTINGS
 from .utils import stream_response, trim_chat
-from .memory import messages as chat_history, summarize
+from .memory import messages as chat_history, build_messages, memory_pass
 from .schemas import Query
 import asyncio
 import json
@@ -13,28 +13,31 @@ import json
 app = FastAPI()
 client = SETTINGS.OLLAMA_CLIENT
 
+
 @app.post("/api/stream")
 async def stream_chat(query: Query):
-    await asyncio.to_thread(summarize)
+    trim_chat()
     chat_history.append(Message(role="user", content=query.input))
-    formatted_msgs = [m if isinstance(m, dict) else m.model_dump() for m in chat_history]
+    formatted_msgs = build_messages()
 
     return StreamingResponse(
-        content=stream_response(client=client, model=query.model, msgs=formatted_msgs),
+        content=stream_response(client=client, model=query.model, msgs=formatted_msgs, query=query),
         media_type="text/event-stream",
     )
 
+
 @app.post("/api/chat")
 async def normal_chat(query: Query):
-    await asyncio.to_thread(summarize)
+    trim_chat()
     chat_history.append(Message(role="user", content=query.input))
-    formatted_msgs = [m.model_dump() for m in chat_history]
+    formatted_msgs = build_messages()
 
     res: ChatResponse = client.chat(
         model=query.model,
         messages=formatted_msgs,
     )
     chat_history.append(Message(role="assistant", content=res.message.content))
+    asyncio.create_task(memory_pass(query.input, res.message.content))
 
     return {
         "content": res.message.content,
@@ -48,17 +51,17 @@ async def normal_chat(query: Query):
 
 @app.post("/api/tool")
 async def tool_chat(query: Query):
-    await asyncio.to_thread(summarize)
+    trim_chat()
     chat_history.append(Message(role="user", content=query.input))
 
     total_in = total_out = 0
-    seen, content, errors  = {}, "Stopped after too many steps.", 0
+    seen, content, errors = {}, "Stopped after too many steps.", 0
 
     for i in range(25):
         custom_tools, custom_funcs = load_custom_tools()
         all_tools = tools + custom_tools
         all_funcs = {**functions, **custom_funcs}
-        formatted_msgs = [m if isinstance(m, dict) else m.model_dump() for m in chat_history]
+        formatted_msgs = build_messages()
 
         res: ChatResponse = client.chat(
             model=query.model,
@@ -96,7 +99,7 @@ async def tool_chat(query: Query):
                 result = f"Error: unknown tool '{name}'"
             result = str(result)
             errors = errors + 1 if result.startswith("Error") else 0
-            
+
             if errors >= 4:
                 result += "\nToo many errors in a row. Stop and tell the user what is failing."
 
@@ -109,6 +112,7 @@ async def tool_chat(query: Query):
             print("Tool Result:\n", result)
             chat_history.append({"role": "tool", "tool_name": name, "content": result})
 
+    asyncio.create_task(memory_pass(query.input, content))
     return {
         "content": content,
         "usage": {
