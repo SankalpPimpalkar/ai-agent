@@ -1,11 +1,11 @@
-from ollama import AsyncClient, ChatResponse, Message
+from ollama import ChatResponse, Message
 from fastapi import FastAPI
 from fastapi.responses import StreamingResponse
 from .tools import tools, functions
 from .tools.tool_builder import load_custom_tools
 from .settings import SETTINGS
 from .utils import stream_response, trim_chat
-from .memory import messages as chat_history
+from .memory import messages as chat_history, summarize
 from .schemas import Query
 import asyncio
 import json
@@ -14,8 +14,8 @@ app = FastAPI()
 client = SETTINGS.OLLAMA_CLIENT
 
 @app.post("/api/stream")
-def stream_chat(query: Query):
-    trim_chat()
+async def stream_chat(query: Query):
+    await asyncio.to_thread(summarize)
     chat_history.append(Message(role="user", content=query.input))
     formatted_msgs = [m if isinstance(m, dict) else m.model_dump() for m in chat_history]
 
@@ -26,7 +26,7 @@ def stream_chat(query: Query):
 
 @app.post("/api/chat")
 async def normal_chat(query: Query):
-    trim_chat()
+    await asyncio.to_thread(summarize)
     chat_history.append(Message(role="user", content=query.input))
     formatted_msgs = [m.model_dump() for m in chat_history]
 
@@ -48,7 +48,7 @@ async def normal_chat(query: Query):
 
 @app.post("/api/tool")
 async def tool_chat(query: Query):
-    trim_chat()
+    await asyncio.to_thread(summarize)
     chat_history.append(Message(role="user", content=query.input))
 
     total_in = total_out = 0
