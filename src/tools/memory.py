@@ -1,8 +1,8 @@
 import re
 import threading
-from src.settings import BASE_DIR
+from src.settings import BASE_DIR, SETTINGS
 
-MEMORY_DIR = BASE_DIR / "memory"
+MEMORY_DIR = BASE_DIR / SETTINGS.MEMORY_FOLDER_NAME
 MAX_FILES = 50
 MAX_LINES = 200
 _LOCK = threading.Lock()

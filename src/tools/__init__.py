@@ -37,7 +37,7 @@ web_search_spec = Tool(
         ),
     ),
 )
-tools.append(web_search_spec)
+if SETTINGS.OLLAMA_WEB_SEARCH: tools.append(web_search_spec)
 
 functions["web_fetch"] = SETTINGS.OLLAMA_CLIENT.web_fetch
 web_fetch_spec = Tool(
@@ -62,7 +62,7 @@ web_fetch_spec = Tool(
         ),
     ),
 )
-tools.append(web_fetch_spec)
+if SETTINGS.OLLAMA_WEB_SEARCH: tools.append(web_fetch_spec)
 
 functions["calculator_tool"] = calculator_tool
 calculator_tool_spec = Tool(

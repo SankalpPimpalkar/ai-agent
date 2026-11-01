@@ -68,23 +68,23 @@ async def tool_chat(query: Query):
             messages=formatted_msgs,
             tools=all_tools,
             think=SETTINGS.THINKING,
-            options={"num_ctx": 8192},
+            options={"num_ctx": SETTINGS.MODEL_CTX_SZ},
         )
         chat_history.append(res.message)
         total_in += res.prompt_eval_count or 0
         total_out += res.eval_count or 0
 
-        if res.message.thinking:
+        if SETTINGS.DEV_MODE and res.message.thinking:
             print("Thinking:\n", res.message.thinking)
 
-        if res.message.content:
+        if SETTINGS.DEV_MODE and res.message.content:
             print("Content:\n", res.message.content)
 
         if not res.message.tool_calls:
             content = (res.message.content or "").removeprefix("end_").strip()
             break
 
-        if res.message.tool_calls:
+        if SETTINGS.DEV_MODE and res.message.tool_calls:
             print("Tool Calls:\n", res.message.tool_calls)
 
         for tc in res.message.tool_calls:
@@ -109,7 +109,8 @@ async def tool_chat(query: Query):
             if seen[key] >= 3:
                 result += "\nYou have repeated this exact call 3 times with the same result. Stop and tell the user what is failing."
 
-            print("Tool Result:\n", result)
+            if SETTINGS.DEV_MODE:
+                print("Tool Result:\n", result)
             chat_history.append({"role": "tool", "tool_name": name, "content": result})
 
     asyncio.create_task(memory_pass(query.input, content))
