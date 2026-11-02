@@ -8,6 +8,7 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 
 class Settings(BaseSettings):
     DEV_MODE: bool = True
+    DATABASE_URL: str = "sqlite+aiosqlite:///./agent.db"
 
     DEFAULT_MODEL: str = "gemma4:12b"
     MODEL_CTX_SZ: int = 8192
