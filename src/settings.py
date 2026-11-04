@@ -22,6 +22,8 @@ class Settings(BaseSettings):
     AGENT_TOOLS_FOLDER_NAME: str = "agent-tools"
 
     SYSTEM_PROMPT: str = Field(default_factory=lambda: (BASE_DIR / "system-prompt.txt").read_text())
+    TOOL_INSTRUCTIONS: str = Field(default_factory=lambda: (BASE_DIR / "tool-instructions.txt").read_text())
+    MEMORY_INSTRUCTIONS: str = Field(default_factory=lambda: (BASE_DIR / "memory-instructions.txt").read_text())
 
     model_config = SettingsConfigDict(env_file=BASE_DIR / ".env", extra="ignore")
 

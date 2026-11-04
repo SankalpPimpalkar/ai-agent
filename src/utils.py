@@ -11,7 +11,7 @@ async def stream_response(client: AsyncClient, model: str, msgs: List[Message], 
         )
         full_response = ""
 
-        async for chunk in stream:
+        for chunk in stream:
             out = chunk["message"]["content"]
             full_response += str(out)
             yield out
@@ -32,3 +32,13 @@ def trim_chat(max_messages: int = 20):
         while chat and _role(chat[0]) != "user":
             chat.pop(0)
     messages[:] = [system_prompt] + chat
+
+def to_response(run: dict) -> dict:
+    return {
+        "content": run["answer"],
+        "usage": {
+            "prompt_tokens": run["total_in"],
+            "completion_tokens": run["total_out"],
+            "total_tokens": run["total_tokens"],
+        },
+    }

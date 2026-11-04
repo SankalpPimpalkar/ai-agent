@@ -7,15 +7,34 @@ import asyncio
 
 messages: List[Message] = [Message(role="system", content=SETTINGS.SYSTEM_PROMPT)]
 
-def build_messages():
-    global messages
+def build_messages(tool_use: bool) -> list:
+    if tool_use:
+        system_text = f"""
+            {SETTINGS.SYSTEM_PROMPT}\n\n
+            {SETTINGS.TOOL_INSTRUCTIONS}\n\n
+            {SETTINGS.MEMORY_INSTRUCTIONS}\n\n
+            Your memory files:\n
+            {memory_index()}
+        """
+    else:
+        system_text = (
+            f"{SETTINGS.SYSTEM_PROMPT}\n\n"
+            "You have no tools in this mode. Do not claim to use tools, "
+            "run code, or save or read memory."
+        )
 
-    system = {
-        'role': 'system',
-        'content': f"{SETTINGS.SYSTEM_PROMPT}\n\nYour Memory Files:\n{memory_index()}"
-    }
-    rest = [m if isinstance(m, dict) else m.model_dump() for m in messages[1:]]
-    return [system] + rest
+    rest = []
+    for m in messages[1:]:
+        d = m if isinstance(m, dict) else m.model_dump()
+        if not tool_use:
+            if d.get("role") == "tool":
+                continue
+            if d.get("tool_calls"):
+                if not d.get("content"):
+                    continue
+                d = {**d, "tool_calls": None}
+        rest.append(d)
+    return [{"role": "system", "content": system_text}, *rest]
 
 async def memory_pass(user_msg: str, assistant_msg: str):
     prompt = (
