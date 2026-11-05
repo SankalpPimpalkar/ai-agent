@@ -2,13 +2,19 @@ from ollama import Message
 from fastapi import FastAPI
 from fastapi.responses import StreamingResponse
 from .settings import SETTINGS
-from .utils import stream_response, trim_chat, to_response
+from .utils import stream_response, trim_chat, to_response, init
 from .memory import messages as chat_history, build_messages, memory_pass
+from contextlib import asynccontextmanager
 from .agent import run_agent
 from .schemas import Query
 import asyncio
 
-app = FastAPI()
+@asynccontextmanager
+async def lifespan(app):
+    await init()
+    yield
+
+app = FastAPI(lifespan=lifespan)
 client = SETTINGS.OLLAMA_CLIENT
 
 @app.post("/api/stream")

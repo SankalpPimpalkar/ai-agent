@@ -2,7 +2,7 @@ dev:
 	uvicorn src.main:app --reload --reload-dir src
 
 migration:
-	alembic revision --autogenerate -m
+	alembic revision --autogenerate 
 
 migrate:
 	alembic upgrade head
