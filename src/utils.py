@@ -78,3 +78,8 @@ async def init():
             await db.refresh(row)
         if not row.is_active:
             await active(db, row.id)
+
+async def get_settings() -> PromptVersion:
+    async with AsyncSession(engine) as db:
+        result = await db.exec(select(PromptVersion).where(PromptVersion.is_active == True))
+        return result.first()

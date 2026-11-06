@@ -12,7 +12,7 @@ SQLModel.metadata.naming_convention = {
     "pk": "pk_%(table_name)s",
 }
 
-engine = create_async_engine(url=SETTINGS.DATABASE_URL, echo=True)
+engine = create_async_engine(url=SETTINGS.DATABASE_URL, echo=False)
 
 async def initdb():
     async with engine.begin() as conn:

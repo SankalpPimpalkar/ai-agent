@@ -2,7 +2,7 @@ from ollama import Message
 from fastapi import FastAPI
 from fastapi.responses import StreamingResponse
 from .settings import SETTINGS
-from .utils import stream_response, trim_chat, to_response, init
+from .utils import stream_response, trim_chat, to_response, init, get_settings
 from .memory import messages as chat_history, build_messages, memory_pass
 from contextlib import asynccontextmanager
 from .agent import run_agent
@@ -30,12 +30,20 @@ async def stream_chat(query: Query):
 
 @app.post("/api/chat")
 async def normal_chat(query: Query):
-    run = await asyncio.to_thread(run_agent, query.input, query.model, False)
+    settings = await get_settings()
+    model = query.model if query.model else settings.model
+    thinking = settings.settings.get('thinking', False)
+    print(settings.model_dump())
+    run = await asyncio.to_thread(run_agent, query.input, model, thinking)
     asyncio.create_task(memory_pass(query.input, run["answer"]))
     return to_response(run)
 
 @app.post("/api/tool")
 async def tool_chat(query: Query):
-    run = await asyncio.to_thread(run_agent, query.input, query.model, True)
+    settings = await get_settings()
+    model = query.model if query.model else settings.model
+    thinking = settings.settings.get('thinking', False)
+    print(settings.model_dump())
+    run = await asyncio.to_thread(run_agent, query.input, model, thinking)
     asyncio.create_task(memory_pass(query.input, run["answer"]))
     return to_response(run)
