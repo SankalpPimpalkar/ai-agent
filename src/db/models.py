@@ -4,7 +4,6 @@ from typing import Dict, Any
 from datetime import datetime, timezone
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-
 class PromptVersion(SQLModel, table=True):
     __tablename__ = "prompt_versions"
     __table_args__ = (

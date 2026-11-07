@@ -205,7 +205,6 @@ memory_tool_spec = Tool(
 )
 tools.append(memory_tool_spec)
 
-
 functions["cli_tool"] = cli_tool
 cli_tool_spec = Tool(
         type="function",

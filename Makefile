@@ -1,3 +1,6 @@
+eval:
+	python  -m evals.main
+
 dev:
 	uvicorn src.main:app --reload --reload-dir src
 

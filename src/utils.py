@@ -34,6 +34,7 @@ def _role(m):
 def trim_chat(max_messages: int = 20):
     system_prompt = messages[0]
     chat = messages[1:]
+    
     if len(chat) > max_messages:
         chat = chat[-max_messages:]
         while chat and _role(chat[0]) != "user":

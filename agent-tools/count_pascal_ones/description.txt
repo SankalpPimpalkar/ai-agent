@@ -1,0 +1,1 @@
+Use when the user asks to count the ones in Pascal's triangle for rows 0 to N.

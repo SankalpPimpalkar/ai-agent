@@ -1,0 +1,1 @@
+{"properties": {"num_rows": {"type": "integer", "description": "num rows"}}, "required": ["num_rows"]}

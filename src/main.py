@@ -33,9 +33,8 @@ async def normal_chat(query: Query):
     settings = await get_settings()
     model = query.model if query.model else settings.model
     thinking = settings.settings.get('thinking', False)
-    print(settings.model_dump())
-    run = await asyncio.to_thread(run_agent, query.input, model, thinking)
-    asyncio.create_task(memory_pass(query.input, run["answer"]))
+    run = await asyncio.to_thread(run_agent, chat_history, query.input, model, thinking)
+    # asyncio.create_task(memory_pass(query.input, run["answer"]))
     return to_response(run)
 
 @app.post("/api/tool")
@@ -43,7 +42,6 @@ async def tool_chat(query: Query):
     settings = await get_settings()
     model = query.model if query.model else settings.model
     thinking = settings.settings.get('thinking', False)
-    print(settings.model_dump())
     run = await asyncio.to_thread(run_agent, query.input, model, thinking)
-    asyncio.create_task(memory_pass(query.input, run["answer"]))
+    # asyncio.create_task(memory_pass(query.input, run["answer"]))
     return to_response(run)

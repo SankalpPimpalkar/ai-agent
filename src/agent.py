@@ -1,6 +1,8 @@
 import json
+from typing import List
 from ollama import ChatResponse, Message
-from .memory import messages as chat_history, build_messages
+from evals.schemas import Trace
+from .memory import build_messages
 from .settings import SETTINGS
 from .tools import tools, functions
 from .tools.tool_builder import load_custom_tools
@@ -9,31 +11,33 @@ from .utils import trim_chat
 client = SETTINGS.OLLAMA_CLIENT
 MAX_STEPS = 25
 
-def run_agent(user_input: str, model: str | None = None, tool_use: bool = False) -> dict:
+def run_agent(
+    chat_history: List[Message],
+    user_input: str,
+    model: str | None = None,
+    thinking: bool = False,
+) -> dict:
     model = model or SETTINGS.DEFAULT_MODEL
     trim_chat()
     chat_history.append(Message(role="user", content=user_input))
 
-    trace, breakers = [], []
+    trace: List[Trace] = []
+    breakers = []
     total_in = total_out = max_step_in = 0
     seen, errors = {}, 0
     answer, steps = "Stopped after too many steps.", 0
 
-    for i in range(MAX_STEPS if tool_use else 1):
+    for i in range(MAX_STEPS):
         steps = i + 1
-
-        if tool_use:
-            custom_tools, custom_funcs = load_custom_tools()
-            all_tools = tools + custom_tools
-            all_funcs = {**functions, **custom_funcs}
-        else:
-            all_tools, all_funcs = None, {}
+        custom_tools, custom_funcs = load_custom_tools()
+        all_tools = tools + custom_tools
+        all_funcs = {**functions, **custom_funcs}
 
         res: ChatResponse = client.chat(
             model=model,
-            messages=build_messages(tool_use=tool_use),         
+            messages=chat_history,
             tools=all_tools,
-            think=SETTINGS.THINKING,
+            think=thinking,
             options={"num_ctx": SETTINGS.MODEL_CTX_SZ},
         )
         chat_history.append(res.message)
@@ -81,7 +85,7 @@ def run_agent(user_input: str, model: str | None = None, tool_use: bool = False)
             if SETTINGS.DEV_MODE:
                 print("Tool Result:\n", result)
 
-            trace.append({"name": name, "args": dict(args), "result": result[:2000]})
+            trace.append({"name": name, "args": dict(args), "result": result})
             chat_history.append({"role": "tool", "tool_name": name, "content": result})
 
     return {
@@ -91,6 +95,6 @@ def run_agent(user_input: str, model: str | None = None, tool_use: bool = False)
         "breakers": breakers,
         "total_in": total_in,
         "total_out": total_out,
-        "total_tokens": total_in + total_out,
+        "tokens": total_in + total_out,
         "max_step_prompt_tokens": max_step_in,
     }
