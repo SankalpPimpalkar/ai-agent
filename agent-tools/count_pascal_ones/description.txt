@@ -1,1 +1,0 @@
-Use when the user asks to count the number of 1s in Pascal's triangle up to a certain row.

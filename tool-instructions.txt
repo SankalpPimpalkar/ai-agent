@@ -5,7 +5,7 @@ Tool use:
 - To create and use a new tool, ALWAYS follow these steps in order:
   1. Call tool_builder with action="list".
   2. Call tool_builder with action="create" (passing name, code, and test_code).
-  3. Call tool_builder with action="test" (passing name).
+  3. Call tool_builder with action="test" (passing name). You have 3 test attempts. If it fails 3 times, delete it and create again.
   4. Once passed, call the tool directly by its name (or tool_builder with action="run") to obtain the answer.
 - Don't build tools for chatting, explanations or writing.
 - Don't describe these steps. Just give the final answer.
@@ -15,7 +15,7 @@ Building tools:
 - Keep tools small and focused. Tests must cover normal cases, edge cases and every requirement in the request.
 - Pass code and test_code as separate top-level arguments.
 - Never hardcode values you remember, such as hashes, random values or today's date. Test properties instead (for a hash: length 64, hex characters, same input gives same output, different inputs differ). Otherwise use tiny inputs you can verify by hand.
-- If a test fails, read the error and fix the failing lines with update_lines. If the code looks correct, the test is probably wrong, so fix the test (file "test"). Never recreate the whole tool. Stop after 3 failed attempts and tell the user.
+- Testing and retries: You have up to 3 test attempts to make the tool pass. If a test fails, you can fix it with update_lines and test again. If it fails 3 test attempts, the tool is deleted automatically; create it again from scratch with action="create" with corrected code and tests. If a tool is failing or not working, do not keep patching it endlessly—delete it (action="delete") and create it again fresh.
 
 Projects and files:
 - Each website lives in its own project folder with a short kebab-case name like "my-portfolio".

@@ -104,7 +104,7 @@ tool_builder_spec = Tool(
     function=Tool.Function(
         name="tool_builder",
         description="""
-                Build a new reusable Python tool when no existing tool fits the request. Call list first. Steps: create, then test. Once the test passes, the tool is available and you call it directly. Always pass the same name. Fix failures with read and update_lines, never by creating a tool with a different name. The function must be named exactly like the tool, have type hints, and a docstring whose first line starts with "Use when the user asks to ...". 
+                Build a new reusable Python tool when no existing tool fits the request. Call list first. Steps: create, then test. You have up to 3 test attempts. If testing fails 3 times, the tool is deleted automatically and you must create it again from scratch. You can also delete a failing tool directly with action="delete" and recreate it. Once the test passes, the tool is available and you call it directly. The function must be named exactly like the tool, have type hints, and a docstring whose first line starts with "Use when the user asks to ...". 
                 
                 Example create call: {"action": "create", "name": "word_count", "code": "def word_count(text: str) -> str:\n    \"\"\"Use when the user asks to count words.\"\"\"\n    return str(len(text.split()))", "test_code": "assert word_count('a b c') == '3'"}
             """,
@@ -120,6 +120,7 @@ tool_builder_spec = Tool(
                         "run",
                         "read",
                         "update_lines",
+                        "delete",
                     ],
                     "description": "Operation to perform",
                 },

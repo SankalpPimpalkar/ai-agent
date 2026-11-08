@@ -2,6 +2,7 @@ import json
 import ast
 import os
 import re
+import shutil
 import subprocess
 import sys
 from ollama import Tool
@@ -186,8 +187,11 @@ def tool_builder(
             if header not in test_code:
                 test_code = header + test_code
 
-            d.mkdir(exist_ok=True)
+            if d.exists():
+                shutil.rmtree(d, ignore_errors=True)
+            d.mkdir(parents=True, exist_ok=True)
             (d / ".passed").unlink(missing_ok=True)
+            (d / ".test_attempts").unlink(missing_ok=True)
             (d / "tool.py").write_text(code, encoding="utf-8")
             (d / "test_tool.py").write_text(test_code, encoding="utf-8")
             (d / "description.txt").write_text(description, encoding="utf-8")
@@ -196,6 +200,12 @@ def tool_builder(
 
         if action in ("read", "update_lines") and file not in FILES:
             return "Error: file must be 'tool' or 'test'"
+
+        if action == "delete":
+            if d.exists():
+                shutil.rmtree(d, ignore_errors=True)
+                return f"Deleted tool '{name}'. You can now create it again from scratch with action='create'."
+            return f"Tool '{name}' does not exist."
 
         if action == "read":
             lines = (d / FILES[file]).read_text(encoding="utf-8").splitlines()
@@ -238,12 +248,37 @@ def tool_builder(
             return f"Updated lines {start_line}-{end_line} of {FILES[file]}. Line numbers may have shifted. Call 'test' again."
 
         if action == "test":
+            attempts_file = d / ".test_attempts"
+            attempts = 0
+            if attempts_file.exists():
+                try:
+                    attempts = int(attempts_file.read_text(encoding="utf-8").strip())
+                except Exception:
+                    attempts = 0
+            attempts += 1
+            attempts_file.write_text(str(attempts), encoding="utf-8")
+
             rc, out = _exec(["test_tool.py"], d)
             if rc == 0:
                 (d / ".passed").touch()
+                attempts_file.unlink(missing_ok=True)
                 return f"PASSED. The tool '{name}' is now available.\n{out}"
+
             (d / ".passed").unlink(missing_ok=True)
-            return f"FAILED\n{out}"
+            if attempts >= 3:
+                shutil.rmtree(d, ignore_errors=True)
+                return (
+                    f"FAILED (attempt 3/3).\n{out}\n"
+                    f"Tool '{name}' failed 3 test attempts and has been deleted. "
+                    f"Do not call update_lines. Call tool_builder with action='create' to create the tool again from scratch with fixed code and tests."
+                )
+
+            remaining = 3 - attempts
+            return (
+                f"FAILED (attempt {attempts}/3).\n{out}\n"
+                f"You have {remaining} test retry(ies) remaining before '{name}' is deleted. "
+                f"Fix the failing test/code or delete the tool and create it again."
+            )
 
         if action == "run":
             json.loads(run_args)
