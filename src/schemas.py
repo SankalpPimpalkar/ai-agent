@@ -1,8 +1,9 @@
+from typing import Optional
 from pydantic import BaseModel
 
 class Query(BaseModel):
-    model: str
     input: str
+    model: Optional[str] = None
 
 class Message(BaseModel):
     role: str
@@ -20,3 +21,12 @@ class PromptVersion(BaseModel):
     memory_instructions: str
     config_hash: str
     settings: PromptVersionSettings
+
+class TraceArgs(BaseModel):
+    action: Optional[str] = None
+    model_config = {"extra": "allow"}
+
+class Trace(BaseModel):
+    name: str
+    args: TraceArgs
+    result: str

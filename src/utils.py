@@ -1,6 +1,6 @@
-from typing import List
+from typing import List, Optional, Any
 from .schemas import Query
-from ollama import AsyncClient, ChatResponse, Message
+from ollama import ChatResponse, Message
 from .memory import messages, memory_pass
 from src.settings import SETTINGS
 from src.db.models import PromptVersion, active
@@ -11,7 +11,7 @@ import asyncio
 import hashlib
 import json
 
-async def stream_response(client: AsyncClient, model: str, msgs: List[Message], query: Query):
+async def stream_response(client: Any, model: str, msgs: List[Any], query: Query):
     try:
         stream: ChatResponse = client.chat(
             model=model, messages=msgs, stream=True
@@ -24,30 +24,36 @@ async def stream_response(client: AsyncClient, model: str, msgs: List[Message], 
             yield out
 
         messages.append(Message(role="assistant", content=full_response))
-        asyncio.create_task(memory_pass(query.input, full_response))
+        asyncio.create_task(memory_pass(query.input, full_response, model=model))
     except Exception as e:
         yield f"\n[Error: {str(e)}]"
 
 def _role(m):
     return m["role"] if isinstance(m, dict) else m.role
 
-def trim_chat(max_messages: int = 20):
-    system_prompt = messages[0]
-    chat = messages[1:]
-    
+def trim_chat(chat_history: Optional[List[Message]] = None, max_messages: int = 20):
+    history = messages if chat_history is None else chat_history
+    if not history:
+        return
+    has_system = _role(history[0]) == "system"
+    system_prompt = history[0] if has_system else None
+    chat = history[1:] if has_system else history[:]
+
     if len(chat) > max_messages:
         chat = chat[-max_messages:]
         while chat and _role(chat[0]) != "user":
             chat.pop(0)
-    messages[:] = [system_prompt] + chat
+
+    history[:] = ([system_prompt] if system_prompt else []) + chat
 
 def to_response(run: dict) -> dict:
+    total_tokens = run.get("total_tokens", run.get("tokens", 0))
     return {
-        "content": run["answer"],
+        "content": run.get("answer", ""),
         "usage": {
-            "prompt_tokens": run["total_in"],
-            "completion_tokens": run["total_out"],
-            "total_tokens": run["total_tokens"],
+            "prompt_tokens": run.get("total_in", 0),
+            "completion_tokens": run.get("total_out", 0),
+            "total_tokens": total_tokens,
         },
     }
 
@@ -80,7 +86,12 @@ async def init():
         if not row.is_active:
             await active(db, row.id)
 
-async def get_settings() -> PromptVersion:
+async def get_settings() -> Optional[PromptVersion]:
     async with AsyncSession(engine) as db:
         result = await db.exec(select(PromptVersion).where(PromptVersion.is_active == True))
-        return result.first()
+        row = result.first()
+        if not row:
+            await init()
+            result = await db.exec(select(PromptVersion).where(PromptVersion.is_active == True))
+            row = result.first()
+        return row

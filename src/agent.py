@@ -1,8 +1,8 @@
 import json
-from typing import List
+from typing import List, Optional
 from ollama import ChatResponse, Message
-from evals.schemas import Trace
-from .memory import build_messages
+from .schemas import Trace
+from .memory import build_messages, messages as default_messages
 from .settings import SETTINGS
 from .tools import tools, functions
 from .tools.tool_builder import load_custom_tools
@@ -12,14 +12,43 @@ client = SETTINGS.OLLAMA_CLIENT
 MAX_STEPS = 25
 
 def run_agent(
-    chat_history: List[Message],
-    user_input: str,
-    model: str | None = None,
+    user_input: Optional[str | List[Message]] = None,
+    model: Optional[str] = None,
+    tool_use: bool = True,
     thinking: bool = False,
+    chat_history: Optional[List[Message]] = None,
+    system_prompt: Optional[str] = None,
+    tool_instructions: Optional[str] = None,
+    memory_instructions: Optional[str] = None,
+    **kwargs,
 ) -> dict:
+    if isinstance(user_input, list):
+        # 1st argument was chat_history
+        passed_history = user_input
+        passed_input = model if isinstance(model, str) else kwargs.get("user_input", "")
+        passed_model = tool_use if isinstance(tool_use, str) else kwargs.get("model", None)
+        passed_tool_use = (
+            thinking
+            if isinstance(thinking, bool) and "tool_use" not in kwargs
+            else kwargs.get("tool_use", True)
+        )
+        passed_thinking = kwargs.get("thinking", False)
+
+        chat_history = passed_history
+        user_input = passed_input
+        model = passed_model
+        tool_use = passed_tool_use
+        thinking = passed_thinking
+    else:
+        user_input = user_input if user_input is not None else kwargs.get("user_input", "")
+        model = model or kwargs.get("model", None)
+        tool_use = tool_use if "tool_use" not in kwargs else kwargs["tool_use"]
+        thinking = thinking if "thinking" not in kwargs else kwargs["thinking"]
+
     model = model or SETTINGS.DEFAULT_MODEL
-    trim_chat()
-    chat_history.append(Message(role="user", content=user_input))
+    history = default_messages if chat_history is None else chat_history
+    trim_chat(history)
+    history.append(Message(role="user", content=user_input))
 
     trace: List[Trace] = []
     breakers = []
@@ -27,20 +56,34 @@ def run_agent(
     seen, errors = {}, 0
     answer, steps = "Stopped after too many steps.", 0
 
-    for i in range(MAX_STEPS):
+    max_iter = MAX_STEPS if tool_use else 1
+
+    for i in range(max_iter):
         steps = i + 1
-        custom_tools, custom_funcs = load_custom_tools()
-        all_tools = tools + custom_tools
-        all_funcs = {**functions, **custom_funcs}
+
+        if tool_use:
+            custom_tools, custom_funcs = load_custom_tools()
+            all_tools = tools + custom_tools
+            all_funcs = {**functions, **custom_funcs}
+        else:
+            all_tools, all_funcs = None, {}
+
+        formatted_messages = build_messages(
+            chat_history=history,
+            tool_use=tool_use,
+            system_prompt=system_prompt,
+            tool_instructions=tool_instructions,
+            memory_instructions=memory_instructions,
+        )
 
         res: ChatResponse = client.chat(
             model=model,
-            messages=chat_history,
+            messages=formatted_messages,
             tools=all_tools,
             think=thinking,
             options={"num_ctx": SETTINGS.MODEL_CTX_SZ},
         )
-        chat_history.append(res.message)
+        history.append(res.message)
 
         step_in = res.prompt_eval_count or 0
         total_in += step_in
@@ -86,7 +129,7 @@ def run_agent(
                 print("Tool Result:\n", result)
 
             trace.append({"name": name, "args": dict(args), "result": result})
-            chat_history.append({"role": "tool", "tool_name": name, "content": result})
+            history.append({"role": "tool", "tool_name": name, "content": result})
 
     return {
         "answer": answer,
@@ -95,6 +138,7 @@ def run_agent(
         "breakers": breakers,
         "total_in": total_in,
         "total_out": total_out,
+        "total_tokens": total_in + total_out,
         "tokens": total_in + total_out,
         "max_step_prompt_tokens": max_step_in,
     }

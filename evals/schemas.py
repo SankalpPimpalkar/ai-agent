@@ -1,14 +1,6 @@
-from pydantic import BaseModel
 from typing import List
-
-class TraceArgs(BaseModel):
-    action: str | None = None
-    model_config = {"extra": "allow"}
-
-class Trace(BaseModel):
-    name: str
-    args: TraceArgs
-    result: str
+from pydantic import BaseModel
+from src.schemas import Trace, TraceArgs
 
 class Run(BaseModel):
     steps: int

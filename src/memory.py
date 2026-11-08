@@ -1,4 +1,4 @@
-from typing import List
+from typing import List, Optional
 from ollama import Message
 from .settings import SETTINGS
 from .tools.memory import memory_index, memory_tool
@@ -7,17 +7,73 @@ import asyncio
 
 messages: List[Message] = [Message(role="system", content=SETTINGS.SYSTEM_PROMPT)]
 
-def build_messages(chat_history: List[Message]) -> list:
-    system_text = "\n\n".join([
-        SETTINGS.SYSTEM_PROMPT,
-        SETTINGS.TOOL_INSTRUCTIONS,
-        SETTINGS.MEMORY_INSTRUCTIONS,
-        f"Your memory files:\n{memory_index()}",
-    ])
-    rest = [m if isinstance(m, dict) else m.model_dump() for m in chat_history[1:]]
+def _role(m):
+    return m["role"] if isinstance(m, dict) else m.role
+
+def build_messages(
+    chat_history: Optional[List[Message]] = None,
+    tool_use: bool = True,
+    system_prompt: Optional[str] = None,
+    tool_instructions: Optional[str] = None,
+    memory_instructions: Optional[str] = None,
+) -> list:
+    history = messages if chat_history is None else chat_history
+
+    if system_prompt is not None:
+        base_system_prompt = system_prompt
+    elif history and _role(history[0]) == "system":
+        first_msg = history[0]
+        base_system_prompt = (
+            first_msg.content
+            if hasattr(first_msg, "content")
+            else first_msg.get("content", SETTINGS.SYSTEM_PROMPT)
+        )
+    else:
+        base_system_prompt = SETTINGS.SYSTEM_PROMPT
+
+    tool_inst = (
+        tool_instructions
+        if tool_instructions is not None
+        else SETTINGS.TOOL_INSTRUCTIONS
+    )
+    mem_inst = (
+        memory_instructions
+        if memory_instructions is not None
+        else SETTINGS.MEMORY_INSTRUCTIONS
+    )
+
+    if tool_use:
+        system_text = "\n\n".join([
+            base_system_prompt.strip(),
+            tool_inst.strip(),
+            mem_inst.strip(),
+            f"Your memory files:\n{memory_index()}",
+        ])
+    else:
+        system_text = (
+            f"{base_system_prompt.strip()}\n\n"
+            "You have no tools in this mode. Do not claim to use tools, "
+            "run code, or save or read memory."
+        )
+
+    raw_rest = history[1:] if (history and _role(history[0]) == "system") else history[:]
+    rest = []
+    for m in raw_rest:
+        if not tool_use:
+            d = m if isinstance(m, dict) else m.model_dump()
+            if d.get("role") == "tool":
+                continue
+            if d.get("tool_calls"):
+                if not d.get("content"):
+                    continue
+                d = {**d, "tool_calls": None}
+            rest.append(d)
+        else:
+            rest.append(m)
+
     return [{"role": "system", "content": system_text}, *rest]
 
-async def memory_pass(user_msg: str, assistant_msg: str, model: str | None = None):
+async def memory_pass(user_msg: str, assistant_msg: str, model: Optional[str] = None):
     system = "\n\n".join([
         SETTINGS.MEMORY_INSTRUCTIONS,
         f"Current memory files:\n{memory_index()}",
