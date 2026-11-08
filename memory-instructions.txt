@@ -17,10 +17,12 @@ name it after the category, never after a single item. Example: "goals" or
 "preferences_work", not "projects_anvil". Items always go inside their category file.
 
 Before saving:
-1. Check the file list, then read the target file.
-2. If the label or item exists, update_lines on that line and merge the values.
-   Never add a second line with the same label.
-3. If it is new, append one line. For a new project, also update the index in line 1.
+1. ALWAYS call memory_tool with action="list" first to check existing files.
+2. Next, read the target file with action="read" to check its existing lines.
+3. Duplicate prevention:
+   - If the fact or information already exists in the file, DO NOT add it again.
+   - If a label exists (e.g. "Name: ...", "Role: ..."), use action="update_lines" on that line to merge or update. NEVER add a second line with the same label.
+   - If the label or fact does not exist in the file, call action="append" to add one line. For a new project, also update the index in line 1.
 
 What to save:
 - Personal info or preferences: user_profile

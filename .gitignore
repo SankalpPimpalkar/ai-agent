@@ -6,6 +6,7 @@ __pycache__/
 artifacts
 memory
 agent.db
+evals/runs/
 
 # C extensions
 *.so

@@ -88,11 +88,36 @@ def memory_tool(
                 return "\n".join(f"{i}: {lines[i - 1]}" for i in range(start, end + 1))
 
             if action == "append":
-                new = content.splitlines()
+                new = [line.strip() for line in content.splitlines() if line.strip()]
                 if not new:
                     raise ValueError("'content' is required")
+                existing_lower = [l.strip().lower() for l in lines]
+                lines_to_add = []
+                updated_labels = []
+                for line in new:
+                    if line.lower() in existing_lower:
+                        continue
+                    if ":" in line:
+                        label = line.split(":", 1)[0].strip().lower()
+                        matching = [
+                            i for i, l in enumerate(lines)
+                            if l.strip().lower().startswith(f"{label}:")
+                        ]
+                        if matching:
+                            idx = matching[0]
+                            lines[idx] = line
+                            updated_labels.append(label)
+                            continue
+                    lines_to_add.append(line)
+
+                if updated_labels and not lines_to_add:
+                    _save(p, lines)
+                    return f"Updated existing label(s) {', '.join(updated_labels)} in {p.stem}"
+                if not lines_to_add and not updated_labels:
+                    return f"Information already exists in {p.stem}. No duplicate added."
+
                 first = len(lines) + 1
-                lines.extend(new)
+                lines.extend(lines_to_add)
                 _save(p, lines)
                 return f"Added lines {first}-{len(lines)} to {p.stem}"
 

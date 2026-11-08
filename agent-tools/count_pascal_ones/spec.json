@@ -1,1 +1,1 @@
-{"properties": {"num_rows": {"type": "integer", "description": "num rows"}}, "required": ["num_rows"]}
+{"properties": {"max_row": {"type": "integer", "description": "max row"}}, "required": ["max_row"]}

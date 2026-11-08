@@ -30,3 +30,4 @@ class Trace(BaseModel):
     name: str
     args: TraceArgs
     result: str
+    step: Optional[int] = None

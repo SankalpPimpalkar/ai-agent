@@ -126,6 +126,7 @@ def _write_spec(d: Path, props: dict, required: list):
 def tool_builder(
     action: str,
     name: str = "",
+    tool_name: str = "",
     description: str = "",
     code: str = "",
     test_code: str = "",
@@ -134,7 +135,9 @@ def tool_builder(
     start_line: int = 0,
     end_line: int = -1,
     params: str = "{}",  # ignored, kept so old calls do not break
+    **kwargs,
 ) -> str:
+    name = name or tool_name or kwargs.get("tool_name", "")
     TOOLS_DIR.mkdir(parents=True, exist_ok=True)
     try:
         if action == "list":

@@ -51,6 +51,7 @@ def run_agent(
     history.append(Message(role="user", content=user_input))
 
     trace: List[Trace] = []
+    logs: List[str] = [f"User Input: {user_input}"]
     breakers = []
     total_in = total_out = max_step_in = 0
     seen, errors = {}, 0
@@ -90,6 +91,11 @@ def run_agent(
         total_out += res.eval_count or 0
         max_step_in = max(max_step_in, step_in)
 
+        if res.message.thinking:
+            logs.append(f"[Step {steps}] Thinking: {res.message.thinking}")
+        if res.message.content:
+            logs.append(f"[Step {steps}] Content: {res.message.content}")
+
         if SETTINGS.DEV_MODE and res.message.thinking:
             print("Thinking:\n", res.message.thinking)
         if SETTINGS.DEV_MODE and res.message.content:
@@ -97,6 +103,7 @@ def run_agent(
 
         if not res.message.tool_calls:
             answer = (res.message.content or "").removeprefix("end_").strip()
+            logs.append(f"[Completed] Final answer: {answer}")
             break
 
         if SETTINGS.DEV_MODE:
@@ -104,6 +111,7 @@ def run_agent(
 
         for tc in res.message.tool_calls:
             name, args = tc.function.name, tc.function.arguments
+            logs.append(f"[Step {steps}] Tool Call: {name}({args})")
 
             if name in all_funcs:
                 try:
@@ -113,28 +121,32 @@ def run_agent(
             else:
                 result = f"Error: unknown tool '{name}'"
             result = str(result)
+            logs.append(f"[Step {steps}] Tool Result: {result}")
 
             errors = errors + 1 if result.startswith("Error") else 0
             if errors >= 4:
                 result += "\nToo many errors in a row. Stop and tell the user what is failing."
                 breakers.append("errors")
+                logs.append(f"[Step {steps}] Breaker triggered: 4 consecutive errors")
 
             key = (name, json.dumps(args, sort_keys=True, default=str), result)
             seen[key] = seen.get(key, 0) + 1
             if seen[key] >= 3:
                 result += "\nYou have repeated this exact call 3 times with the same result. Stop and tell the user what is failing."
                 breakers.append("repeat")
+                logs.append(f"[Step {steps}] Breaker triggered: call repeated 3 times with same result")
 
             if SETTINGS.DEV_MODE:
                 print("Tool Result:\n", result)
 
-            trace.append({"name": name, "args": dict(args), "result": result})
+            trace.append({"name": name, "args": dict(args), "result": result, "step": steps})
             history.append({"role": "tool", "tool_name": name, "content": result})
 
     return {
         "answer": answer,
         "steps": steps,
         "trace": trace,
+        "logs": logs,
         "breakers": breakers,
         "total_in": total_in,
         "total_out": total_out,
