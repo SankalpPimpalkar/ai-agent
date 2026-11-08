@@ -1,8 +1,11 @@
 import re
 import threading
 from src.settings import BASE_DIR, SETTINGS
+from src.tools.state import STATE
 
 MEMORY_DIR = BASE_DIR / SETTINGS.MEMORY_FOLDER_NAME
+SECRET = re.compile(r"(api[_-]?key|password|passwd|secret|token)\s*[:=]|sk-[A-Za-z0-9]{16,}", re.I)
+WRITES = {"create", "append", "update_lines", "delete_lines", "delete_file"}
 MAX_FILES = 50
 MAX_LINES = 200
 _LOCK = threading.Lock()
@@ -53,7 +56,13 @@ def memory_tool(
             MEMORY_DIR.mkdir(parents=True, exist_ok=True)
 
             if action == "list":
+                STATE.memory_listed = True
                 return memory_index()
+
+            if action in WRITES and not STATE.memory_listed:
+                return "Error: call memory_tool with action='list' first."
+            if action in WRITES and SECRET.search(content):
+                return "Error: do not store secrets."
 
             if not file:
                 return "Error: 'file' is required. Call list to see existing files"

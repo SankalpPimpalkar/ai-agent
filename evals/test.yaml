@@ -1,0 +1,17 @@
+- name: collatz_chain_with_memory
+  prompt: "Build a tool that takes a number and returns its Collatz step count and the highest value reached. Run it for 27 and store the step count under 'collatz_steps'. Then run it for 97 and store that step count under 'collatz_steps_97'. Recall both from memory and tell me the difference. Also tell me the highest value reached for 27."
+  max_steps: 20
+  forbid_tools: [cli_tool]
+  expected_output: ["111", "118", "9232"]
+
+# - name: two_tools_one_depends_on_other
+#   prompt: "Build a tool is_prime(n). Then build a second tool that uses is_prime to find the largest gap between consecutive primes below 100. Run it, store the gap under 'max_gap', and tell me the gap and the two primes that form it."
+#   max_steps: 20
+#   forbid_tools: [cli_tool]
+#   expected_output: ["8", "89", "97"]
+
+# - name: anagram_grouping
+#   prompt: "Build a tool that groups anagrams from this list: listen, silent, enlist, google, gogole, cat, act. Store the largest group under 'top_group'. Tell me how many groups there are and which words are in the largest one."
+#   max_steps: 16
+#   forbid_tools: [cli_tool]
+#   expected_output: ["3", "listen", "silent", "enlist"]

@@ -7,12 +7,12 @@ from pathlib import Path
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 class Settings(BaseSettings):
-    DEV_MODE: bool = True
+    DEV_MODE: bool = False
     DATABASE_URL: str = "sqlite+aiosqlite:///./agent.db"
 
     DEFAULT_MODEL: str = "gemma4:12b"
     MODEL_CTX_SZ: int = 8192
-    THINKING: bool = True
+    THINKING: bool
 
     OLLAMA_API_KEY: str
     OLLAMA_WEB_SEARCH: bool = False

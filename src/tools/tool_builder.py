@@ -8,36 +8,26 @@ import sys
 from ollama import Tool
 from pathlib import Path
 from src.settings import SETTINGS
+from src.tools.state import STATE
 
 AGENT_TOOLS_FOLDER_NAME = SETTINGS.AGENT_TOOLS_FOLDER_NAME
 TOOLS_DIR = (Path.cwd() / AGENT_TOOLS_FOLDER_NAME).resolve()
 NAME = re.compile(r"[a-z][a-z0-9_]{0,40}")
 FILES = {"tool": "tool.py", "test": "test_tool.py"}
-TYPE_MAP = {"str": "string", "int": "integer", "float": "number", "bool": "boolean"}
+MAX_CREATES = 3
+MAX_TESTS = 3
 
 
-def _build_spec(code: str, name: str):
-    tree = ast.parse(code)
-    fn = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == name)
-    args = fn.args.args
-    first_default = len(args) - len(fn.args.defaults)
-    props, required = {}, []
-    for i, a in enumerate(args):
-        t = ast.unparse(a.annotation) if a.annotation else "str"
-        props[a.arg] = {
-            "type": TYPE_MAP.get(t, "string"),
-            "description": a.arg.replace("_", " "),
-        }
-        if i < first_default:
-            required.append(a.arg)
-    doc = (ast.get_docstring(fn) or "").strip().splitlines()
-    return props, required, (doc[0] if doc else "")
-
-
-def _write_spec(d: Path, props: dict, required: list):
-    (d / "spec.json").write_text(
-        json.dumps({"properties": props, "required": required}), encoding="utf-8"
-    )
+def _json_type(annotation: str) -> str:
+    base = annotation.split("[", 1)[0].strip().lower()
+    return {
+        "str": "string",
+        "int": "integer",
+        "float": "number",
+        "bool": "boolean",
+        "list": "array",
+        "dict": "object",
+    }.get(base, "string")
 
 
 def _dir(name: str) -> Path:
@@ -82,7 +72,7 @@ def _exec(args: list[str], cwd: Path, timeout: int = 20):
         stdin=subprocess.DEVNULL,
         env={"PATH": os.environ.get("PATH", "")},
     )
-    return r.returncode, (r.stdout + r.stderr).strip()[:2000]
+    return r.returncode, (r.stdout + r.stderr).strip()[-2000:]
 
 
 def custom_tool_runner(name: str):
@@ -90,9 +80,6 @@ def custom_tool_runner(name: str):
         return tool_builder(action="run", name=name, run_args=json.dumps(kwargs))
 
     return run
-
-
-TYPE_MAP = {"str": "string", "int": "integer", "float": "number", "bool": "boolean"}
 
 
 def _build_spec(code: str, name: str):
@@ -109,7 +96,7 @@ def _build_spec(code: str, name: str):
     for i, a in enumerate(args):
         t = ast.unparse(a.annotation) if a.annotation else "str"
         props[a.arg] = {
-            "type": TYPE_MAP.get(t, "string"),
+            "type": _json_type(t),
             "description": a.arg.replace("_", " "),
         }
         if i < first_default:
@@ -138,10 +125,11 @@ def tool_builder(
     params: str = "{}",  # ignored, kept so old calls do not break
     **kwargs,
 ) -> str:
-    name = name or tool_name or kwargs.get("tool_name", "")
+    name = name or tool_name
     TOOLS_DIR.mkdir(parents=True, exist_ok=True)
     try:
         if action == "list":
+            STATE.tools_listed = True
             lines = []
             for d in sorted(TOOLS_DIR.iterdir()):
                 if d.is_dir():
@@ -161,6 +149,13 @@ def tool_builder(
         d = _dir(name)
 
         if action == "create":
+            if not STATE.tools_listed:
+                return "Error: call tool_builder with action='list' first."
+            if STATE.creates >= MAX_CREATES:
+                return (
+                    "Error: create limit reached. Stop building tools. "
+                    "Answer with what you have and say what failed."
+                )
             if not code.strip():
                 return "Error: 'code' is empty. Pass the Python code as the top-level 'code' argument, next to 'action' and 'name'."
             if not test_code.strip():
@@ -187,11 +182,11 @@ def tool_builder(
             if header not in test_code:
                 test_code = header + test_code
 
+            STATE.creates += 1
+
             if d.exists():
                 shutil.rmtree(d, ignore_errors=True)
             d.mkdir(parents=True, exist_ok=True)
-            (d / ".passed").unlink(missing_ok=True)
-            (d / ".test_attempts").unlink(missing_ok=True)
             (d / "tool.py").write_text(code, encoding="utf-8")
             (d / "test_tool.py").write_text(test_code, encoding="utf-8")
             (d / "description.txt").write_text(description, encoding="utf-8")
@@ -207,10 +202,14 @@ def tool_builder(
                 return f"Deleted tool '{name}'. You can now create it again from scratch with action='create'."
             return f"Tool '{name}' does not exist."
 
+        if not d.exists():
+            return f"Error: tool '{name}' does not exist. Call list to see existing tools."
+
         if action == "read":
             lines = (d / FILES[file]).read_text(encoding="utf-8").splitlines()
             start = max(start_line, 1)
-            end = min(end_line or len(lines), len(lines))
+            end = end_line if end_line > 0 else len(lines)
+            end = min(end, len(lines))
             return "\n".join(f"{i}: {lines[i - 1]}" for i in range(start, end + 1))
 
         if action == "update_lines":
@@ -265,31 +264,38 @@ def tool_builder(
                 return f"PASSED. The tool '{name}' is now available.\n{out}"
 
             (d / ".passed").unlink(missing_ok=True)
-            if attempts >= 3:
+            if attempts >= MAX_TESTS:
                 shutil.rmtree(d, ignore_errors=True)
+                if STATE.creates >= MAX_CREATES:
+                    return (
+                        f"FAILED (attempt {MAX_TESTS}/{MAX_TESTS}).\n{out}\n"
+                        f"Tool '{name}' was deleted and the create limit is reached. "
+                        f"Stop building. Answer with what you have and say what failed."
+                    )
                 return (
-                    f"FAILED (attempt 3/3).\n{out}\n"
-                    f"Tool '{name}' failed 3 test attempts and has been deleted. "
+                    f"FAILED (attempt {MAX_TESTS}/{MAX_TESTS}).\n{out}\n"
+                    f"Tool '{name}' failed {MAX_TESTS} test attempts and has been deleted. "
                     f"Do not call update_lines. Call tool_builder with action='create' to create the tool again from scratch with fixed code and tests."
                 )
 
-            remaining = 3 - attempts
+            remaining = MAX_TESTS - attempts
             return (
-                f"FAILED (attempt {attempts}/3).\n{out}\n"
+                f"FAILED (attempt {attempts}/{MAX_TESTS}).\n{out}\n"
                 f"You have {remaining} test retry(ies) remaining before '{name}' is deleted. "
-                f"Fix the failing test/code or delete the tool and create it again."
+                f"Fix the failing test/code with update_lines, then test again."
             )
 
         if action == "run":
-            json.loads(run_args)
-            runner = f"import sys, json; from tool import {name} as f; print(f(**json.loads(sys.argv[1])))"
+            try:
+                json.loads(run_args)
+            except json.JSONDecodeError:
+                return "Error: run_args must be a valid JSON object string, e.g. '{\"n\": 5}'"
+            runner = "import sys, json; from tool import %s as f; print(f(**json.loads(sys.argv[1])))" % name
             out = _exec(["-c", runner, run_args], d)[1]
             return out if (d / ".passed").exists() else f"[UNTESTED TOOL] {out}"
 
         if action == "register":
-            return (
-                "No need to register. The tool is available as soon as its test passes."
-            )
+            return "No need to register. The tool is available as soon as its test passes."
 
         return f"Error: unknown action '{action}'"
 

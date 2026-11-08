@@ -5,40 +5,11 @@ import subprocess
 from pathlib import Path
 from src.settings import SETTINGS
 
-BLACK_LISTED = {
-    "rm",
-    "rmdir",
-    "del",
-    "format",
-    "mkfs",
-    "dd",
-    "shutdown",
-    "reboot",
-    "halt",
-    "poweroff",
-    "sudo",
-    "su",
-    "chmod",
-    "chown",
-    "kill",
-    "killall",
-    "curl",
-    "wget",
-    "nc",
-    "ssh",
-    "scp",
-    "powershell",
-    "cmd",
-    "bash",
-    "sh",
-    "zsh",
-    "eval",
-    "exec",
-}
-
 ARTIFACTS_FOLDER_NAME = SETTINGS.ARTIFACTS_FOLDER_NAME
 ROOT = (Path.cwd() / ARTIFACTS_FOLDER_NAME).resolve()
-ALLOWED_BINARIES = {"npm", "npx", "pnpm", "yarn", "git", "node", "pip", "python"}
+ALLOWED_BINARIES = {"npm", "npx", "pnpm", "yarn", "git", "node"}
+BLOCKED_FLAGS = {"-c", "-e", "--eval"}
+DEV_SERVERS = [["npm", "run", "dev"], ["npm", "start"], ["yarn", "dev"], ["pnpm", "dev"]]
 SHELL_META = re.compile(r"[;&|`$<>\n\r]")
 PROJECT_NAME = re.compile(r"[A-Za-z0-9_-]+")
 
@@ -54,27 +25,26 @@ def _safe_path(p: str, project: str) -> Path:
         raise ValueError(f"Path escapes project: {p}")
     return full
 
+def _clip(text: str, n: int = 2000) -> str:
+    return text if len(text) <= n else "...(truncated)\n" + text[-n:]
+
+
 def _validate_command(command: str) -> list[str]:
     if SHELL_META.search(command):
         raise ValueError("Shell operators are not allowed")
-
-    parts = command.strip().split()
+    parts = command.split()
     if not parts:
         raise ValueError("Empty command")
-
-    name = Path(parts[0]).name.lower()
-    if name in BLACK_LISTED:
-        raise ValueError(f"Blacklisted command: {name}")
-    if name not in ALLOWED_BINARIES:
-        raise ValueError(f"Command not allowed: {name}")
-
+    if Path(parts[0]).name.lower() not in ALLOWED_BINARIES:
+        raise ValueError(f"Command not allowed: {parts[0]}")
+    if any(parts[:len(d)] == d for d in DEV_SERVERS):
+        raise ValueError("Dev servers never exit. Use 'npm run build' to verify")
     for arg in parts[1:]:
-        if arg.lower() in BLACK_LISTED:
-            raise ValueError(f"Blacklisted argument: {arg}")
+        if arg in BLOCKED_FLAGS:
+            raise ValueError(f"Flag not allowed: {arg}")
         if Path(arg).is_absolute() or ".." in re.split(r"[\\/]", arg):
             raise ValueError(f"Unsafe path argument: {arg}")
     return parts
-
 
 def cli_tool(
     action: str,
@@ -112,8 +82,8 @@ def cli_tool(
                 env={**os.environ, "CI": "1"},
             )
             if result.returncode != 0:
-                return f"Error: {result.stderr or result.stdout}"
-            return result.stdout or "Command completed"
+                return f"Error: {_clip(result.stderr or result.stdout)}"
+            return _clip(result.stdout) or "Command completed"
 
         if action == "create_file":
             p = _safe_path(path, project)
@@ -125,7 +95,7 @@ def cli_tool(
             lines = _safe_path(path, project).read_text(encoding="utf-8").splitlines()
             start = max(start_line, 1)
             end = end_line if end_line else len(lines)
-            return "\n".join(f"{i}: {lines[i - 1]}" for i in range(start, min(end, len(lines)) + 1))
+            return _clip("\n".join(f"{i}: {lines[i - 1]}" for i in range(start, min(end, len(lines)) + 1)), 4000)
 
         if action == "update_file":
             p = _safe_path(path, project)
