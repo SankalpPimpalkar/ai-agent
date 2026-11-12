@@ -6,6 +6,7 @@ from .memory import build_messages, messages as default_messages
 from .settings import SETTINGS
 from .tools import tools, functions
 from .tools.tool_builder import load_custom_tools
+from .tools.state import STATE
 from .utils import trim_chat
 
 client = SETTINGS.OLLAMA_CLIENT
@@ -20,6 +21,7 @@ def run_agent(
     system_prompt: Optional[str] = None,
     tool_instructions: Optional[str] = None,
     memory_instructions: Optional[str] = None,
+    max_steps: Optional[int] = None,
     **kwargs,
 ) -> dict:
     if isinstance(user_input, list):
@@ -45,6 +47,7 @@ def run_agent(
         tool_use = tool_use if "tool_use" not in kwargs else kwargs["tool_use"]
         thinking = thinking if "thinking" not in kwargs else kwargs["thinking"]
 
+    STATE.reset()
     model = model or SETTINGS.DEFAULT_MODEL
     history = default_messages if chat_history is None else chat_history
     trim_chat(history)
@@ -57,8 +60,10 @@ def run_agent(
     seen, errors = {}, 0
     answer, steps = "Stopped after too many steps.", 0
 
-    max_iter = MAX_STEPS if tool_use else 1
+    effective_max_steps = max_steps or kwargs.get("max_steps") or MAX_STEPS
+    max_iter = effective_max_steps if tool_use else 1
 
+    res = None
     for i in range(max_iter):
         steps = i + 1
 
@@ -77,13 +82,40 @@ def run_agent(
             memory_instructions=memory_instructions,
         )
 
-        res: ChatResponse = client.chat(
-            model=model,
-            messages=formatted_messages,
-            tools=all_tools,
-            think=thinking,
-            options={"num_ctx": SETTINGS.MODEL_CTX_SZ},
-        )
+        try:
+            res = client.chat(
+                model=model,
+                messages=formatted_messages,
+                tools=all_tools,
+                think=thinking,
+                options={"num_ctx": SETTINGS.MODEL_CTX_SZ},
+            )
+        except Exception as e:
+            err_str = str(e)
+            logs.append(f"[Step {steps}] Ollama error: {err_str}")
+            if "XML syntax error" in err_str or "unexpected EOF" in err_str:
+                # Retry without tools to get the final answer directly and avoid XML parsing crash
+                try:
+                    res = client.chat(
+                        model=model,
+                        messages=[
+                            *formatted_messages,
+                            Message(
+                                role="user",
+                                content="Please state the final answer and all requested values directly in text now.",
+                            ),
+                        ],
+                        tools=None,
+                        think=False,
+                        options={"num_ctx": SETTINGS.MODEL_CTX_SZ},
+                    )
+                except Exception as e2:
+                    logs.append(f"[Step {steps}] Ollama retry failed: {e2}")
+                    answer = f"Error during model chat: {e2}"
+                    break
+            else:
+                answer = f"Error during model chat: {err_str}"
+                break
         history.append(res.message)
 
         step_in = res.prompt_eval_count or 0
@@ -141,6 +173,14 @@ def run_agent(
 
             trace.append({"name": name, "args": dict(args), "result": result, "step": steps})
             history.append({"role": "tool", "tool_name": name, "content": result})
+
+    if (
+        answer == "Stopped after too many steps."
+        and res
+        and getattr(res, "message", None)
+        and res.message.content
+    ):
+        answer = res.message.content.removeprefix("end_").strip()
 
     return {
         "answer": answer,

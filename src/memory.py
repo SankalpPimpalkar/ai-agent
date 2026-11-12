@@ -69,7 +69,12 @@ def build_messages(
                 d = {**d, "tool_calls": None}
             rest.append(d)
         else:
-            rest.append(m)
+            if hasattr(m, "role") and m.role == "assistant" and getattr(m, "thinking", None):
+                rest.append(Message(role=m.role, content=m.content, tool_calls=m.tool_calls))
+            elif isinstance(m, dict) and m.get("role") == "assistant" and m.get("thinking"):
+                rest.append({k: v for k, v in m.items() if k != "thinking"})
+            else:
+                rest.append(m)
 
     return [{"role": "system", "content": system_text}, *rest]
 

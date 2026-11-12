@@ -1,4 +1,5 @@
 import json
+import shutil
 import yaml
 import asyncio
 from datetime import datetime, timezone
@@ -41,6 +42,12 @@ async def main():
     print(f"{'=' * 60}\n")
 
     for case in cases:
+        for folder_name in ("agent-tools", "memory"):
+            d = Path(folder_name).resolve()
+            if d.exists():
+                shutil.rmtree(d, ignore_errors=True)
+            d.mkdir(parents=True, exist_ok=True)
+        Path("artifacts").resolve().mkdir(parents=True, exist_ok=True)
         messages: List[Message] = (
             [Message(role="system", content=sys_prompt)] if sys_prompt else []
         )
@@ -54,6 +61,7 @@ async def main():
             system_prompt=sys_prompt,
             tool_instructions=tool_inst,
             memory_instructions=mem_inst,
+            max_steps=case.max_steps,
         )
         run = Run(**raw)
 

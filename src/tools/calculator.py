@@ -1,5 +1,6 @@
 import math
 import operator as op
+from ollama import Tool
 
 BINARY = {
     "+": op.add,
@@ -37,6 +38,7 @@ UNARY = {
 
 _OPS = list(BINARY.keys()) + list(UNARY.keys())
 
+
 def _fmt(x) -> str:
     if isinstance(x, float):
         if x.is_integer() and abs(x) < 1e15:
@@ -62,3 +64,36 @@ def calculator_tool(op1: float, operator: str, op2: float = 0.0) -> str:
         return "Error: input is outside the valid range for this operation"
     except Exception:
         return "Error: invalid input"
+
+
+calculator_tool_spec = Tool(
+    type="function",
+    function=Tool.Function(
+        name="calculator_tool",
+        description="""
+                Perform math calculations. Always use this instead of calculating in your head.
+                Two-number operations (op1, operator, op2): + - * / // % ** max min gcd lcm hypot,
+                root (op2-th root of op1), log (op1 with base op2), percent_of (op1 percent of op2),
+                percent_change (change from op1 to op2), round (op1 to op2 decimals).
+                One-number operations (op1, operator, no op2): sqrt abs ln log10 log2 ceil floor factorial,
+                sin cos tan (angle in degrees).
+                For longer expressions, call it step by step and use each result in the next call.
+            """,
+        parameters=Tool.Function.Parameters(
+            type="object",
+            properties={
+                "op1": {"type": "float", "description": "First Operand"},
+                "op2": {
+                    "type": "float",
+                    "description": "Second number. Omit for one-number operations like sqrt or factorial",
+                },
+                "operator": {
+                    "type": "string",
+                    "enum": _OPS,
+                    "description": "Operation to apply. Two-number: + - * / // % ** max min gcd lcm root (op2-th root of op1) log (op1 with base op2) percent_of (op1 percent of op2) percent_change (from op1 to op2) round (op1 to op2 decimals) hypot. One-number (op2 ignored): sqrt abs ln log10 log2 ceil floor factorial sin cos tan (degrees).",
+                },
+            },
+            required=["op1", "operator"],
+        ),
+    ),
+)

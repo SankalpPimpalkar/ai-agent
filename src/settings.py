@@ -11,7 +11,7 @@ class Settings(BaseSettings):
     DATABASE_URL: str = "sqlite+aiosqlite:///./agent.db"
 
     DEFAULT_MODEL: str = "gemma4:12b"
-    MODEL_CTX_SZ: int = 8192
+    MODEL_CTX_SZ: int = 32768
     THINKING: bool
 
     OLLAMA_API_KEY: str
