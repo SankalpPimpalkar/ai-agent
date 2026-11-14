@@ -11,7 +11,11 @@ from langchain_core.messages import (
 )
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from app.agent.llm import get_llm
-from app.agent.memory import load_session_history, save_session_history
+from app.agent.memory import (
+    load_session_history,
+    record_session_metadata,
+    save_session_history,
+)
 from app.agent.middleware import (
     prune_old_tool_outputs_middleware,
     summarize_context_middleware,
@@ -158,6 +162,15 @@ class AgentRunner:
             await save_session_history(
                 active_session_id, messages, checkpointer=self._checkpointer
             )
+            try:
+                await record_session_metadata(
+                    session_id=active_session_id,
+                    messages=messages,
+                    latest_user_message=message,
+                    llm=active_llm,
+                )
+            except Exception:
+                pass
 
         return final_content
 
@@ -274,6 +287,15 @@ class AgentRunner:
             await save_session_history(
                 active_session_id, messages, checkpointer=self._checkpointer
             )
+            try:
+                await record_session_metadata(
+                    session_id=active_session_id,
+                    messages=messages,
+                    latest_user_message=message,
+                    llm=active_llm,
+                )
+            except Exception:
+                pass
 
 
 async def build_agent(

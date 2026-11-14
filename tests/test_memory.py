@@ -205,6 +205,54 @@ class TestApiSessionManagement(unittest.TestCase):
             self.assertEqual(res.status_code, 200)
             self.assertEqual(res.headers.get("X-Session-ID"), "stream-sess-99")
 
+    def test_list_and_manage_conversations(self):
+        with TestClient(self.app) as client:
+            # Create session 1
+            res1 = client.post(
+                "/chat",
+                json={"message": "How do I configure Docker containers?", "session_id": "sess-docker"},
+            )
+            self.assertEqual(res1.status_code, 200)
+
+            # Create session 2
+            res2 = client.post(
+                "/chat",
+                json={"message": "Tell me about Python asyncio concurrency.", "session_id": "sess-asyncio"},
+            )
+            self.assertEqual(res2.status_code, 200)
+
+            # List conversations
+            list_res = client.get("/conversations")
+            self.assertEqual(list_res.status_code, 200)
+            conversations = list_res.json()
+            self.assertGreaterEqual(len(conversations), 2)
+
+            session_ids = [c["session_id"] for c in conversations]
+            self.assertIn("sess-docker", session_ids)
+            self.assertIn("sess-asyncio", session_ids)
+
+            # Verify summary and timestamp fields
+            docker_item = next(c for c in conversations if c["session_id"] == "sess-docker")
+            self.assertIn("Docker", docker_item["summary"])
+            self.assertIn("last_message_at", docker_item)
+            self.assertIn("created_at", docker_item)
+            self.assertGreaterEqual(docker_item["message_count"], 1)
+
+            # Get conversation details with message history
+            detail_res = client.get("/conversations/sess-docker")
+            self.assertEqual(detail_res.status_code, 200)
+            detail = detail_res.json()
+            self.assertEqual(detail["session_id"], "sess-docker")
+            self.assertGreaterEqual(len(detail["messages"]), 1)
+
+            # Delete conversation
+            del_res = client.delete("/conversations/sess-docker")
+            self.assertEqual(del_res.status_code, 204)
+
+            # Confirm 404 after deletion
+            get_after_del = client.get("/conversations/sess-docker")
+            self.assertEqual(get_after_del.status_code, 404)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -15,6 +15,7 @@ flowchart TD
     subgraph APILayer["FastAPI Application Layer (app/)"]
         Main["app/main.py\n(FastAPI Composition Root & Lifespan)"]
         ChatRoute["app/api/routes/chat.py\nPOST /chat\nPOST /chat/stream"]
+        ConvRoute["app/api/routes/conversations.py\nGET /conversations"]
         DocRoute["app/api/routes/documents.py\nPOST /documents"]
         HealthRoute["GET /health"]
         Deps["app/api/deps.py\n(Dependency Injection)"]
@@ -229,6 +230,8 @@ sequenceDiagram
   FastAPI dependency injection providers: yields database sessions (`get_db_session`), assembles the agent runner (`get_agent`), and retrieves the vector store (`get_vector_store_dep`).
 - **`app/api/routes/chat.py`**:
   Single centralized chat route. Handles both synchronous JSON replies (`POST /chat`) and Server-Sent Events token streaming (`POST /chat/stream`).
+- **`app/api/routes/conversations.py`**:
+  Conversation history routes (`GET /conversations`, `GET /conversations/{session_id}`, `DELETE /conversations/{session_id}`) listing active sessions with their auto-updated topic summary and last message timestamp.
 - **`app/api/routes/documents.py`**:
   Unified RAG document ingestion route (`POST /documents`). Supports both raw text payloads (`application/json`) and file uploads (`multipart/form-data`) in a single route. Extracts, chunks, and stores documents when `ENABLE_RAG=True`.
 
@@ -267,10 +270,12 @@ sequenceDiagram
 - **`app/rag/embeddings.py`**:
   Embeddings provider wrapping LangChain's `OllamaEmbeddings`.
 
-#### Data Transfer Objects & Schemas (`app/schemas/`)
+#### Data Transfer Objects & Schemas (`app/schemas/` & `app/models/`)
 
+- **`app/models/conversation.py`**:
+  SQLModel table definition (`ConversationSession`) tracking `session_id`, auto-updated `summary`, `last_message_at`, `created_at`, and `message_count`.
 - **`app/schemas/chat.py`**:
-  Pydantic models for chat requests (`ChatRequest`), responses (`ChatResponse`), document ingestion (`DocumentIngestRequest`, `DocumentIngestResponse`), and health status.
+  Pydantic models for chat requests (`ChatRequest`), responses (`ChatResponse`), document ingestion (`DocumentIngestRequest`, `DocumentIngestResponse`), conversation listings (`ConversationSessionItem`, `ConversationDetailResponse`), and health status.
 - **`app/schemas/mcp.py`**:
   Strict schema models (`MCPServerConfig`, `MCPConfigFile`) validating `stdio` and `sse` MCP configurations, performing environment variable expansions, and enforcing platform standards.
 

@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import async_engine_from_config
 from alembic import context
 from sqlmodel import SQLModel
 from app.config import settings
+import app.models  # Register all SQLModel models with SQLModel.metadata
 
 database_url = settings.DATABASE_URL
 
@@ -33,6 +34,18 @@ target_metadata = SQLModel.metadata
 # ... etc.
 
 
+def include_object(object, name, type_, reflected, compare_to):
+    # Exclude internal checkpointer tables managed by langgraph-checkpoint-sqlite
+    if type_ == "table" and name in {
+        "checkpoints",
+        "checkpoint_blobs",
+        "checkpoint_writes",
+        "writes",
+    }:
+        return False
+    return True
+
+
 def run_migrations_offline() -> None:
     """Run migrations in 'offline' mode.
 
@@ -51,7 +64,8 @@ def run_migrations_offline() -> None:
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
-        render_as_batch=True
+        render_as_batch=True,
+        include_object=include_object,
     )
 
     with context.begin_transaction():
@@ -59,7 +73,12 @@ def run_migrations_offline() -> None:
 
 
 def do_run_migrations(connection: Connection) -> None:
-    context.configure(connection=connection, target_metadata=target_metadata, render_as_batch=True)
+    context.configure(
+        connection=connection,
+        target_metadata=target_metadata,
+        render_as_batch=True,
+        include_object=include_object,
+    )
 
     with context.begin_transaction():
         context.run_migrations()

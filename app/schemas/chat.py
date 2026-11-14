@@ -1,4 +1,5 @@
-from typing import Any, Dict, Optional
+from datetime import datetime
+from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, Field
 
 
@@ -33,3 +34,22 @@ class HealthResponse(BaseModel):
     rag_enabled: bool
     tools_enabled: bool
     mcp_enabled: bool
+
+
+class ConversationSessionItem(BaseModel):
+    session_id: str
+    summary: str
+    last_message_at: datetime
+    created_at: datetime
+    message_count: int
+
+
+class MessageItem(BaseModel):
+    role: str
+    content: str
+    name: Optional[str] = None
+    tool_calls: Optional[List[Dict[str, Any]]] = None
+
+
+class ConversationDetailResponse(ConversationSessionItem):
+    messages: List[MessageItem] = []

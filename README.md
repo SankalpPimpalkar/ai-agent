@@ -7,10 +7,18 @@ A streamlined, production-ready AI agent service scaffolded with **FastAPI**, **
 - **LangChain Integration**: Leverages `ChatOllama` and standard LangChain messages (`HumanMessage`, `AIMessage`, `SystemMessage`, `ToolMessage`) for clean model interactions.
 - **Dynamic MCP Server Integration**: Plug-and-play Model Context Protocol (MCP) server support loaded from a standardized `mcp_servers.json` configuration file.
 - **RAG Document Ingestion**: Vector storage with chunking, embedding, and retriever-as-a-tool support.
+- **Persistent Session Memory & Checkpointers**: Conversation history is persisted in SQLite using `langgraph-checkpoint-sqlite`. Sessions resume automatically when supplying a `session_id` (or auto-assign a UUID).
+- **Auto-Summarizing Conversation History**: Tracks active sessions in `conversation_sessions`, maintaining an auto-updated topic summary column, message counts, and timestamps.
+- **Custom Context Middlewares**:
+  - Prunes old tool call results from previous turns into short placeholders to free context tokens.
+  - Summarizes and compresses earlier conversation turns when context overflows.
 - **Centralized API Endpoints**:
   - `POST /chat`: Standard JSON response with multi-step tool execution.
-  - `POST /chat/stream`: Server-Sent Events (SSE) token streaming.
-  - `POST /documents`: RAG document ingestion endpoint.
+  - `POST /chat/stream`: Server-Sent Events (SSE) token streaming with `X-Session-ID` header.
+  - `GET /conversations`: List all conversation sessions with `session_id`, `summary`, and `last_message_at`.
+  - `GET /conversations/{session_id}`: Retrieve a conversation's full message history.
+  - `DELETE /conversations/{session_id}`: Remove a conversation session.
+  - `POST /documents`: Unified RAG document ingestion endpoint (JSON or file uploads).
   - `GET /health`: Service health check reporting active feature flags.
 - **SQLModel Persistence**: Async SQLite / PostgreSQL session handling.
 - **Alembic Migrations**: Fully configured async migration pipeline (`alembic upgrade head`) wired to SQLModel metadata.
@@ -35,12 +43,17 @@ A streamlined, production-ready AI agent service scaffolded with **FastAPI**, **
 │   ├── api/
 │   │   ├── deps.py          # Shared dependencies (agent, vector store, session)
 │   │   └── routes/
-│   │       ├── chat.py      # /chat, /chat/stream
-│   │       └── documents.py # /documents (RAG ingest)
+│   │       ├── chat.py          # /chat, /chat/stream
+│   │       ├── conversations.py # /conversations (list, detail, delete)
+│   │       └── documents.py     # /documents (RAG ingest)
 │   ├── agent/
 │   │   ├── llm.py           # ChatOllama setup
 │   │   ├── builder.py       # Assembles agent with tools and tool-calling loop
+│   │   ├── memory.py        # SQLite checkpointer & session persistence
+│   │   ├── middleware.py    # Tool pruning & context summarization middlewares
 │   │   └── prompts.py       # System and chat prompt templates
+│   ├── models/
+│   │   └── conversation.py  # SQLModel for conversation sessions & topic summary
 │   ├── tools/
 │   │   ├── registry.py      # Aggregates local, RAG, and MCP tools
 │   │   ├── local.py         # Plain @tool functions
@@ -131,6 +144,37 @@ curl -X POST http://localhost:8000/documents \
 
 ---
 
+## Listing & Managing Conversations
+
+### List all active conversations:
+```bash
+curl http://localhost:8000/conversations
+```
+*Response:*
+```json
+[
+  {
+    "session_id": "session-101",
+    "summary": "Docker container configuration and networking",
+    "last_message_at": "2026-11-14T12:30:00Z",
+    "created_at": "2026-11-14T12:00:00Z",
+    "message_count": 4
+  }
+]
+```
+
+### Inspect conversation history:
+```bash
+curl http://localhost:8000/conversations/session-101
+```
+
+### Delete a conversation:
+```bash
+curl -X DELETE http://localhost:8000/conversations/session-101
+```
+
+---
+
 ## Quickstart
 
 ### 1. Setup
@@ -144,9 +188,16 @@ make install
 cp .env.sample .env
 ```
 
-### 2. Database Migrations
+### 2. Database Migrations & Management
 ```bash
+# Apply pending migrations
 make migrate
+
+# Clean app.db and recreate all tables and migrations from scratch
+make db-reset
+
+# Clean app.db and re-apply existing migrations
+make db-clean
 ```
 
 ### 3. Run the Application

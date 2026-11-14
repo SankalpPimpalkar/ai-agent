@@ -5,6 +5,7 @@ from sqlalchemy.pool import StaticPool
 from sqlmodel import SQLModel
 from sqlmodel.ext.asyncio.session import AsyncSession
 from app.config import settings
+import app.models  # Register all SQLModel models on SQLModel.metadata
 
 SQLModel.metadata.naming_convention = {
     "ix": "ix_%(column_0_label)s",
