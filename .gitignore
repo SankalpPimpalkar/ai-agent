@@ -3,11 +3,13 @@ __pycache__/
 *.py[cod]
 *$py.class
 
+# Runtime state data
+data/
+evals/runs/
 agent-tools
 artifacts
 memory
 agent.db
-evals/runs/
 
 # C extensions
 *.so

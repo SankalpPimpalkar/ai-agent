@@ -1,0 +1,20 @@
+PLAN.md Format and Lifecycle Instructions:
+
+1. Format of PLAN.md:
+Every project artifact must maintain a minimal PLAN.md in its project folder with ONLY tasks and tests as check boxes:
+
+# Plan: <project-name>
+
+## Tasks
+- [ ] <Implementation task 1>
+- [ ] <Implementation task 2>
+
+## Tests
+- [ ] <Test 1: Verification command and expected output>
+- [ ] <Test 2: Verification command and expected output>
+
+2. Tracking and Updating Rules:
+- The Planner Agent creates the initial PLAN.md before code is written.
+- The Execution Agent follows Tasks and Tests step by step.
+- As each task or test is completed and verified, update PLAN.md using planner_tool (action="mark_done", task="<task_or_index>") to change '- [ ]' to '- [x]'.
+- When all tasks and tests are marked '- [x]', the artifact is complete.

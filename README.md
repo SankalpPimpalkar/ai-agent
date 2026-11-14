@@ -651,7 +651,7 @@ make dev
 Or using Uvicorn directly:
 
 ```bash
-uvicorn src.main:app --reload --reload-dir src
+uvicorn src.agent.main:app --reload --reload-dir src
 ```
 
 ### 2. Standard Chat with Token Metrics
