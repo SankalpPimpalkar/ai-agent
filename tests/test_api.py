@@ -85,6 +85,33 @@ class TestApiEndpoints(unittest.TestCase):
             self.assertEqual(data["status"], "success")
             self.assertGreaterEqual(data["chunks_count"], 1)
 
+    def test_documents_endpoint_file_upload(self):
+        rag_settings = Settings(ENABLE_RAG=True)
+        rag_app = build_app(app_settings=rag_settings, agent_runner=self.agent_runner)
+        fake_store = InMemoryVectorStore(FakeEmbeddings())
+        from app.api.deps import get_vector_store_dep
+        rag_app.dependency_overrides[get_vector_store_dep] = lambda: fake_store
+
+        with TestClient(rag_app) as client:
+            files = {"file": ("manual.txt", b"This is the user manual content.", "text/plain")}
+            res = client.post("/documents", files=files)
+            self.assertEqual(res.status_code, 200)
+            data = res.json()
+            self.assertEqual(data["status"], "success")
+            self.assertGreaterEqual(data["chunks_count"], 1)
+            self.assertIn("manual.txt", data["message"])
+
+    def test_documents_endpoint_empty_payload(self):
+        rag_settings = Settings(ENABLE_RAG=True)
+        rag_app = build_app(app_settings=rag_settings, agent_runner=self.agent_runner)
+        fake_store = InMemoryVectorStore(FakeEmbeddings())
+        from app.api.deps import get_vector_store_dep
+        rag_app.dependency_overrides[get_vector_store_dep] = lambda: fake_store
+
+        with TestClient(rag_app) as client:
+            res = client.post("/documents", json={"content": "  "})
+            self.assertEqual(res.status_code, 422)
+
 
 if __name__ == "__main__":
     unittest.main()

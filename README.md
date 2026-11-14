@@ -110,6 +110,27 @@ ENABLE_MCP=True
 
 ---
 
+## Document Ingestion (RAG Knowledge Base)
+
+The `POST /documents` endpoint accepts **both** raw text and uploaded document files in a single unified route when `ENABLE_RAG=True`:
+
+### Option 1: Raw Text via JSON
+```bash
+curl -X POST http://localhost:8000/documents \
+  -H "Content-Type: application/json" \
+  -d '{"content": "LangChain enables modular LLM architectures.", "metadata": {"source": "manual"}}'
+```
+
+### Option 2: File Upload (PDF, Word DOCX, Markdown, Text, Code)
+```bash
+# Upload a PDF, Word document (.docx), Markdown or text file
+curl -X POST http://localhost:8000/documents \
+  -F "file=@sample_report.pdf" \
+  -F 'metadata={"category": "finance"}'
+```
+
+---
+
 ## Quickstart
 
 ### 1. Setup
