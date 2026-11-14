@@ -34,6 +34,13 @@ class Settings(BaseSettings):
     ENABLE_RAG: bool = False
     ENABLE_TOOLS: bool = False
     ENABLE_MCP: bool = False
+    ENABLE_PERSISTENT_MEMORY: bool = True
+
+    # Memory and checkpointer settings
+    CHECKPOINTER_DB_PATH: str = str(DATA_DIR / "app.db")
+    MAX_CONTEXT_CHARACTERS: int = 8000
+    MAX_CONTEXT_MESSAGES: int = 20
+    SUMMARY_KEEP_RECENT: int = 4
 
     # RAG settings
     EMBEDDING_MODEL: str = "nomic-embed-text"

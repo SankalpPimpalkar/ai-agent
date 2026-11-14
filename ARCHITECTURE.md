@@ -24,6 +24,8 @@ flowchart TD
         Builder["app/agent/builder.py\n(AgentRunner & Tool Loop)"]
         LLM["app/agent/llm.py\n(ChatOllama Provider)"]
         Prompts["app/agent/prompts.py\n(System & Chat Templates)"]
+        Memory["app/agent/memory.py\n(Checkpointer & Session State)"]
+        Middleware["app/agent/middleware.py\n(Tool Pruning & Summarization)"]
     end
 
     subgraph ToolLayer["Tool Ecosystem (app/tools/)"]
@@ -100,9 +102,9 @@ flowchart TD
 
 ## 2. End-to-End Code Flow
 
-### 2.1 Chat Request Flow (with Tool Calling)
+### 2.1 Chat Request Flow (with Memory & Tool Calling)
 
-The sequence diagram below illustrates what happens from the moment a client sends a message to `/chat` until the model responds (including automatic MCP or local tool invocation):
+The sequence diagram below illustrates what happens from the moment a client sends a message to `/chat` until the model responds (including session checkpointer, middlewares, and automatic tool invocation):
 
 ```mermaid
 sequenceDiagram
@@ -111,12 +113,15 @@ sequenceDiagram
     participant Router as app/api/routes/chat.py
     participant Deps as app/api/deps.py
     participant Runner as app/agent/builder.py (AgentRunner)
+    participant Memory as app/agent/memory.py (Checkpointer)
+    participant Middlewares as app/agent/middleware.py
     participant Registry as app/tools/registry.py
     participant MCP as app/tools/mcp.py
     participant LLM as app/agent/llm.py (ChatOllama)
     participant ExtMCP as Git / External MCP Server
 
-    Client->>Router: POST /chat {"message": "What is the git status?"}
+    Client->>Router: POST /chat {"message": "...", "session_id": "optional-uuid"}
+    Router->>Router: Resolve session_id (reuse or generate UUID)
     Router->>Deps: get_agent()
     Deps->>Runner: build_agent()
     Runner->>Registry: get_all_tools()
@@ -131,21 +136,29 @@ sequenceDiagram
     Registry-->>Runner: Return all active tools
     Runner->>LLM: bind_tools(tools)
   
-    Router->>Runner: execute("What is the git status?")
-    Runner->>LLM: ainvoke([SystemMessage, HumanMessage])
+    Router->>Runner: execute(message, session_id)
+    Runner->>Memory: load_session_history(session_id)
+    Memory-->>Runner: Prior conversation messages
+    Runner->>Middlewares: prune_old_tool_outputs_middleware(messages)
+    Middlewares-->>Runner: Messages with truncated old tool outputs
+    Runner->>Middlewares: summarize_context_middleware(messages)
+    Middlewares-->>Runner: Compressed messages (if context overflowed)
+
+    Runner->>LLM: ainvoke(messages)
   
-    LLM-->>Runner: AIMessage(tool_calls=[git_status()])
-  
-    Note over Runner,ExtMCP: Tool Execution Loop (up to max_iterations)
-    Runner->>ExtMCP: ainvoke git_status()
-    ExtMCP-->>Runner: Output: "On branch main, working tree clean"
-    Runner->>Runner: Append ToolMessage(content=..., tool_call_id=...)
-  
-    Runner->>LLM: ainvoke([SystemMessage, HumanMessage, AIMessage, ToolMessage])
-    LLM-->>Runner: AIMessage("The working tree is clean on branch main.")
-  
-    Runner-->>Router: "The working tree is clean on branch main."
-    Router-->>Client: 200 OK {"response": "...", "model": "..."}
+    alt LLM returns Tool Calls
+        LLM-->>Runner: AIMessage(tool_calls=[git_status()])
+        Note over Runner,ExtMCP: Tool Execution Loop (up to max_iterations)
+        Runner->>ExtMCP: ainvoke git_status()
+        ExtMCP-->>Runner: Output: "On branch main, working tree clean"
+        Runner->>Runner: Append ToolMessage(content=..., tool_call_id=...)
+        Runner->>LLM: ainvoke(messages + ToolMessage)
+    end
+
+    LLM-->>Runner: AIMessage("Final answer response")
+    Runner->>Memory: save_session_history(session_id, updated_messages)
+    Runner-->>Router: "Final answer response"
+    Router-->>Client: 200 OK {"response": "...", "model": "...", "session_id": "uuid"}
 ```
 
 ---
@@ -227,6 +240,12 @@ sequenceDiagram
   `AgentRunner` class. Builds prompt sequences (`SystemMessage` + `HumanMessage`), binds tools, and executes the multi-turn tool calling loop for both synchronous turns (`execute()`) and token streaming (`execute_stream()`) with optional tool status notices.
 - **`app/agent/prompts.py`**:
   Default system prompts and `ChatPromptTemplate` structures.
+- **`app/agent/memory.py`**:
+  Persistent conversation memory backed by LangGraph checkpointers (`AsyncSqliteSaver`) storing multi-turn history indexed by `session_id` in SQLite.
+- **`app/agent/middleware.py`**:
+  Custom agent middlewares:
+  - `prune_old_tool_outputs_middleware`: Replaces previous turns' tool outputs with concise placeholders while keeping schema-valid tool call identifiers.
+  - `summarize_context_middleware`: Compresses earlier conversation history when context size overflows, preserving key facts and recent messages.
 
 #### Tooling Subsystem (`app/tools/`)
 

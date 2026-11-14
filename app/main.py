@@ -2,6 +2,7 @@ from contextlib import asynccontextmanager
 from typing import Optional
 from fastapi import FastAPI
 from app.agent.builder import AgentRunner, build_agent
+from app.agent.memory import init_checkpointer
 from app.api.routes.chat import router as chat_router
 from app.api.routes.documents import router as documents_router
 from app.config import Settings, settings
@@ -13,6 +14,8 @@ from app.schemas.chat import HealthResponse
 async def lifespan(application: FastAPI):
     # Initialize SQLModel database tables on startup
     await init_db()
+    # Initialize checkpointer tables on SQLite database
+    await init_checkpointer()
     yield
 
 

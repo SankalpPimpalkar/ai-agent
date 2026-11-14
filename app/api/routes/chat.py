@@ -1,3 +1,4 @@
+import uuid
 from typing import AsyncGenerator
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
@@ -12,12 +13,14 @@ router = APIRouter(tags=["chat"])
 async def _chat_stream_generator(
     agent: AgentRunner,
     request: ChatRequest,
+    session_id: str,
     model: str,
     system_prompt: str,
 ) -> AsyncGenerator[str, None]:
     try:
         async for chunk in agent.execute_stream(
             message=request.message,
+            session_id=session_id,
             system_prompt=system_prompt,
             model=model,
             stream_tools=request.stream_tools,
@@ -35,15 +38,22 @@ async def chat(
 ):
     """
     Synchronous chat endpoint returning the complete assistant response.
+    Maintains persistent session memory across calls.
     """
     if not request.message.strip():
         raise HTTPException(status_code=422, detail="Message cannot be empty")
 
+    session_id = (
+        request.session_id.strip()
+        if request.session_id and request.session_id.strip()
+        else str(uuid.uuid4())
+    )
     model = request.model or settings.MODEL
     system_prompt = request.system_prompt or settings.SYSTEM_PROMPT
 
     response_text = await agent.execute(
         message=request.message,
+        session_id=session_id,
         system_prompt=system_prompt,
         model=model,
     )
@@ -51,7 +61,7 @@ async def chat(
     return ChatResponse(
         response=response_text,
         model=model,
-        session_id=request.session_id,
+        session_id=session_id,
     )
 
 
@@ -63,10 +73,16 @@ async def chat_stream(
 ):
     """
     Streaming chat endpoint returning tokens via Server-Sent Events (SSE).
+    Maintains persistent session memory across calls and exposes X-Session-ID header.
     """
     if not request.message.strip():
         raise HTTPException(status_code=422, detail="Message cannot be empty")
 
+    session_id = (
+        request.session_id.strip()
+        if request.session_id and request.session_id.strip()
+        else str(uuid.uuid4())
+    )
     model = request.model or settings.MODEL
     system_prompt = request.system_prompt or settings.SYSTEM_PROMPT
 
@@ -74,8 +90,10 @@ async def chat_stream(
         _chat_stream_generator(
             agent=agent,
             request=request,
+            session_id=session_id,
             model=model,
             system_prompt=system_prompt,
         ),
         media_type="text/event-stream",
+        headers={"X-Session-ID": session_id},
     )

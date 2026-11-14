@@ -1,3 +1,4 @@
+import uuid
 from typing import Any, AsyncGenerator, List, Optional
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import (
@@ -8,7 +9,13 @@ from langchain_core.messages import (
     SystemMessage,
     ToolMessage,
 )
+from langgraph.checkpoint.base import BaseCheckpointSaver
 from app.agent.llm import get_llm
+from app.agent.memory import load_session_history, save_session_history
+from app.agent.middleware import (
+    prune_old_tool_outputs_middleware,
+    summarize_context_middleware,
+)
 from app.config import settings
 from app.tools.registry import get_all_tools
 
@@ -16,16 +23,19 @@ from app.tools.registry import get_all_tools
 class AgentRunner:
     """
     Executes conversational turns using an LLM optionally bound with tools
-    from local, RAG, and MCP sources.
+    from local, RAG, and MCP sources, with persistent memory and middleware support.
     """
 
     def __init__(
         self,
         llm: Optional[BaseChatModel] = None,
         tools: Optional[List[Any]] = None,
+        checkpointer: Optional[BaseCheckpointSaver] = None,
     ):
         self._llm = llm
         self._tools = tools
+        self._checkpointer = checkpointer
+        self.last_session_id: Optional[str] = None
 
     async def get_tools(self) -> List[Any]:
         if self._tools is not None:
@@ -36,7 +46,10 @@ class AgentRunner:
         active_llm = self._llm or get_llm(model=model)
         active_tools = await self.get_tools()
         if active_tools and hasattr(active_llm, "bind_tools"):
-            return active_llm.bind_tools(active_tools)
+            try:
+                return active_llm.bind_tools(active_tools)
+            except (NotImplementedError, AttributeError):
+                return active_llm
         return active_llm
 
     def build_messages(
@@ -46,15 +59,22 @@ class AgentRunner:
         system_prompt: Optional[str] = None,
     ) -> List[BaseMessage]:
         sys = system_prompt or settings.SYSTEM_PROMPT
-        msgs: List[BaseMessage] = [SystemMessage(content=sys)]
+        msgs: List[BaseMessage] = []
         if history:
-            msgs.extend(history)
+            if isinstance(history[0], SystemMessage):
+                msgs.extend(history)
+            else:
+                msgs.append(SystemMessage(content=sys))
+                msgs.extend(history)
+        else:
+            msgs.append(SystemMessage(content=sys))
         msgs.append(HumanMessage(content=message))
         return msgs
 
     async def execute(
         self,
         message: str,
+        session_id: Optional[str] = None,
         history: Optional[List[BaseMessage]] = None,
         system_prompt: Optional[str] = None,
         model: Optional[str] = None,
@@ -62,21 +82,43 @@ class AgentRunner:
     ) -> str:
         """
         Invokes the model, automatically handles tool calling iterations if
-        tools are invoked, and returns the final assistant answer.
+        tools are invoked, applies persistent memory and middlewares, and returns the final assistant answer.
         """
+        active_session_id = session_id or str(uuid.uuid4())
+        self.last_session_id = active_session_id
+
+        prior_history: List[BaseMessage] = []
+        if settings.ENABLE_PERSISTENT_MEMORY:
+            persisted = await load_session_history(
+                active_session_id, checkpointer=self._checkpointer
+            )
+            if persisted:
+                prior_history.extend(persisted)
+        if history:
+            prior_history.extend(history)
+
         tools = await self.get_tools()
         tools_map = {t.name: t for t in tools} if tools else {}
 
         active_llm = self._llm or get_llm(model=model)
-        runnable = (
-            active_llm.bind_tools(tools)
-            if tools and hasattr(active_llm, "bind_tools")
-            else active_llm
-        )
+        runnable = active_llm
+        if tools and hasattr(active_llm, "bind_tools"):
+            try:
+                runnable = active_llm.bind_tools(tools)
+            except (NotImplementedError, AttributeError):
+                runnable = active_llm
 
         messages = self.build_messages(
-            message=message, history=history, system_prompt=system_prompt
+            message=message, history=prior_history, system_prompt=system_prompt
         )
+
+        # Apply middlewares:
+        # 1. Prune old tool outputs to placeholders
+        messages = prune_old_tool_outputs_middleware(messages)
+        # 2. Summarize context if size overflows
+        messages = await summarize_context_middleware(messages, llm=active_llm)
+
+        final_content = "Task completed."
 
         for _ in range(max_iterations):
             response = await runnable.ainvoke(messages)
@@ -87,7 +129,8 @@ class AgentRunner:
                 content = getattr(response, "content", "")
                 if isinstance(content, list):
                     content = "".join(str(part) for part in content)
-                return str(content)
+                final_content = str(content)
+                break
 
             # Execute tool calls
             for tc in tool_calls:
@@ -111,12 +154,17 @@ class AgentRunner:
                     )
                 )
 
-        last_msg = messages[-1]
-        return str(getattr(last_msg, "content", "")) or "Task completed."
+        if settings.ENABLE_PERSISTENT_MEMORY:
+            await save_session_history(
+                active_session_id, messages, checkpointer=self._checkpointer
+            )
+
+        return final_content
 
     async def execute_stream(
         self,
         message: str,
+        session_id: Optional[str] = None,
         history: Optional[List[BaseMessage]] = None,
         system_prompt: Optional[str] = None,
         model: Optional[str] = None,
@@ -125,21 +173,39 @@ class AgentRunner:
     ) -> AsyncGenerator[str, None]:
         """
         Streams generated tokens from the LLM, automatically executing tool calls
-        in a loop until the final assistant answer is produced.
+        in a loop, managing persistent memory and context compression.
         """
+        active_session_id = session_id or str(uuid.uuid4())
+        self.last_session_id = active_session_id
+
+        prior_history: List[BaseMessage] = []
+        if settings.ENABLE_PERSISTENT_MEMORY:
+            persisted = await load_session_history(
+                active_session_id, checkpointer=self._checkpointer
+            )
+            if persisted:
+                prior_history.extend(persisted)
+        if history:
+            prior_history.extend(history)
+
         tools = await self.get_tools()
         tools_map = {t.name: t for t in tools} if tools else {}
 
         active_llm = self._llm or get_llm(model=model)
-        runnable = (
-            active_llm.bind_tools(tools)
-            if tools and hasattr(active_llm, "bind_tools")
-            else active_llm
-        )
+        runnable = active_llm
+        if tools and hasattr(active_llm, "bind_tools"):
+            try:
+                runnable = active_llm.bind_tools(tools)
+            except (NotImplementedError, AttributeError):
+                runnable = active_llm
 
         messages = self.build_messages(
-            message=message, history=history, system_prompt=system_prompt
+            message=message, history=prior_history, system_prompt=system_prompt
         )
+
+        # Apply middlewares:
+        messages = prune_old_tool_outputs_middleware(messages)
+        messages = await summarize_context_middleware(messages, llm=active_llm)
 
         for _ in range(max_iterations):
             accumulated: Optional[AIMessageChunk] = None
@@ -204,10 +270,16 @@ class AgentRunner:
                     )
                 )
 
+        if settings.ENABLE_PERSISTENT_MEMORY:
+            await save_session_history(
+                active_session_id, messages, checkpointer=self._checkpointer
+            )
+
 
 async def build_agent(
     llm: Optional[BaseChatModel] = None,
     tools: Optional[List[Any]] = None,
+    checkpointer: Optional[BaseCheckpointSaver] = None,
 ) -> AgentRunner:
     """Assembles and returns an AgentRunner instance."""
-    return AgentRunner(llm=llm, tools=tools)
+    return AgentRunner(llm=llm, tools=tools, checkpointer=checkpointer)
