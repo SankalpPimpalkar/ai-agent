@@ -224,7 +224,7 @@ sequenceDiagram
 - **`app/agent/llm.py`**:
   Instantiates the LangChain chat model (`ChatOllama`) configured with model name, base URL, and temperature.
 - **`app/agent/builder.py`**:
-  `AgentRunner` class. Builds prompt sequences (`SystemMessage` + `HumanMessage`), binds tools, executes the multi-turn tool calling loop using `ToolMessage`, and formats final answers.
+  `AgentRunner` class. Builds prompt sequences (`SystemMessage` + `HumanMessage`), binds tools, and executes the multi-turn tool calling loop for both synchronous turns (`execute()`) and token streaming (`execute_stream()`) with optional tool status notices.
 - **`app/agent/prompts.py`**:
   Default system prompts and `ChatPromptTemplate` structures.
 

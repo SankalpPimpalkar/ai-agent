@@ -7,6 +7,7 @@ class ChatRequest(BaseModel):
     model: Optional[str] = Field(default=None, description="Optional LLM model override")
     system_prompt: Optional[str] = Field(default=None, description="Optional system prompt override")
     session_id: Optional[str] = Field(default=None, description="Optional session or conversation ID")
+    stream_tools: bool = Field(default=False, description="Whether to stream tool execution notices in streaming mode")
 
 
 class ChatResponse(BaseModel):

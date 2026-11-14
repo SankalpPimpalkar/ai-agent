@@ -60,6 +60,22 @@ class TestApiEndpoints(unittest.TestCase):
             self.assertIn("text/event-stream", res.headers.get("content-type", ""))
             self.assertIn("Hello from LangChain!", res.text)
 
+    def test_chat_stream_endpoint_with_tool_calling(self):
+        from app.tools.local import calculate_expression
+        from tests.test_agent import MockStreamingToolLLM
+
+        mock_llm = MockStreamingToolLLM()
+        agent_runner = AgentRunner(llm=mock_llm, tools=[calculate_expression])
+        app = build_app(app_settings=self.settings, agent_runner=agent_runner)
+
+        with TestClient(app) as client:
+            payload = {"message": "Compute 10 + 20", "stream_tools": True}
+            res = client.post("/chat/stream", json=payload)
+            self.assertEqual(res.status_code, 200)
+            self.assertIn("text/event-stream", res.headers.get("content-type", ""))
+            self.assertIn("[Calling tool 'calculate_expression'...]", res.text)
+            self.assertIn("The result is 30.", res.text)
+
     def test_documents_endpoint_disabled(self):
         with TestClient(self.app) as client:
             payload = {"content": "Sample document content"}

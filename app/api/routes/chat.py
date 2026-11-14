@@ -20,6 +20,7 @@ async def _chat_stream_generator(
             message=request.message,
             system_prompt=system_prompt,
             model=model,
+            stream_tools=request.stream_tools,
         ):
             yield chunk
     except Exception as e:

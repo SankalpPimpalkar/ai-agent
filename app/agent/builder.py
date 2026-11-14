@@ -2,6 +2,7 @@ from typing import Any, AsyncGenerator, List, Optional
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import (
     AIMessage,
+    AIMessageChunk,
     BaseMessage,
     HumanMessage,
     SystemMessage,
@@ -119,18 +120,89 @@ class AgentRunner:
         history: Optional[List[BaseMessage]] = None,
         system_prompt: Optional[str] = None,
         model: Optional[str] = None,
+        max_iterations: int = 5,
+        stream_tools: bool = False,
     ) -> AsyncGenerator[str, None]:
-        """Streams generated tokens from the runnable."""
-        runnable = await self.get_runnable(model=model)
+        """
+        Streams generated tokens from the LLM, automatically executing tool calls
+        in a loop until the final assistant answer is produced.
+        """
+        tools = await self.get_tools()
+        tools_map = {t.name: t for t in tools} if tools else {}
+
+        active_llm = self._llm or get_llm(model=model)
+        runnable = (
+            active_llm.bind_tools(tools)
+            if tools and hasattr(active_llm, "bind_tools")
+            else active_llm
+        )
+
         messages = self.build_messages(
             message=message, history=history, system_prompt=system_prompt
         )
-        async for chunk in runnable.astream(messages):
-            content = getattr(chunk, "content", "")
-            if isinstance(content, list):
-                content = "".join(str(part) for part in content)
-            if content:
-                yield str(content)
+
+        for _ in range(max_iterations):
+            accumulated: Optional[AIMessageChunk] = None
+
+            async for chunk in runnable.astream(messages):
+                if isinstance(chunk, str):
+                    chunk = AIMessageChunk(content=chunk)
+                elif not isinstance(chunk, AIMessageChunk) and isinstance(chunk, BaseMessage):
+                    chunk = AIMessageChunk(
+                        content=chunk.content,
+                        tool_calls=getattr(chunk, "tool_calls", None) or [],
+                        additional_kwargs=getattr(chunk, "additional_kwargs", {}),
+                    )
+
+                if accumulated is None:
+                    accumulated = chunk
+                else:
+                    accumulated = accumulated + chunk
+
+                content = getattr(chunk, "content", "")
+                if isinstance(content, list):
+                    content = "".join(str(part) for part in content)
+                if content:
+                    yield str(content)
+
+            if accumulated is None:
+                break
+
+            ai_message = AIMessage(
+                content=accumulated.content,
+                tool_calls=getattr(accumulated, "tool_calls", None) or [],
+                additional_kwargs=getattr(accumulated, "additional_kwargs", {}),
+            )
+            messages.append(ai_message)
+
+            tool_calls = getattr(ai_message, "tool_calls", None)
+            if not tool_calls:
+                break
+
+            # Execute tool calls
+            for tc in tool_calls:
+                tool_name = tc.get("name")
+                tool_args = tc.get("args", {})
+                tool_id = tc.get("id") or tool_name
+
+                if stream_tools:
+                    yield f"\n[Calling tool '{tool_name}'...]\n"
+
+                if tool_name in tools_map:
+                    try:
+                        tool_result = await tools_map[tool_name].ainvoke(tool_args)
+                    except Exception as err:
+                        tool_result = f"Error executing tool {tool_name}: {err}"
+                else:
+                    tool_result = f"Error: unknown tool '{tool_name}'"
+
+                messages.append(
+                    ToolMessage(
+                        content=str(tool_result),
+                        tool_call_id=tool_id,
+                        name=tool_name,
+                    )
+                )
 
 
 async def build_agent(
