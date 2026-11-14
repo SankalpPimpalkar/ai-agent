@@ -1,5 +1,0 @@
-Memory Guidelines:
-- Use memory_tool to save important context, user preferences, ongoing projects, or information you think is worth memorizing across conversations.
-- Also use memory_tool whenever the user explicitly asks to store or remember data under a key/name.
-- Memory can change and evolve over time: read or list existing memory to check what is already saved, and update, append, or overwrite entries as new information emerges.
-- Never store secrets or passwords.

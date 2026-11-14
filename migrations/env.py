@@ -6,11 +6,10 @@ from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
 from alembic import context
-from src.agent.settings import SETTINGS
 from sqlmodel import SQLModel
-from src.agent.db.models import *
+from app.config import settings
 
-database_url = SETTINGS.DATABASE_URL
+database_url = settings.DATABASE_URL
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.
