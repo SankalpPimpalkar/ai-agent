@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -16,6 +16,7 @@ class Settings(BaseSettings):
 
     # Application settings
     APP_NAME: str = "ai-agent"
+    BASE_DIR: Path = BASE_DIR
     DEBUG: bool = False
     HOST: str = "0.0.0.0"
     PORT: int = 8000
@@ -39,8 +40,8 @@ class Settings(BaseSettings):
     CHUNK_SIZE: int = 1000
     CHUNK_OVERLAP: int = 200
 
-    # MCP settings
-    MCP_SERVERS: List[str] = []
+    # MCP configuration file path (standard mcpServers JSON)
+    MCP_CONFIG_PATH: str = "mcp_servers.json"
 
 
 settings = Settings()

@@ -1,14 +1,19 @@
-# AI Agent (FastAPI + LangChain + SQLModel + Alembic)
+# AI Agent (FastAPI + LangChain + SQLModel + Alembic + MCP + RAG)
 
-A streamlined, production-ready AI chat service scaffolded with **FastAPI**, **LangChain** (via `ChatOllama`), **SQLModel**, and **Alembic** migrations.
+A streamlined, production-ready AI agent service scaffolded with **FastAPI**, **LangChain** (via `ChatOllama`), **SQLModel**, **Alembic**, **Model Context Protocol (MCP)**, and **RAG** vector search.
 
 ## Features
 
-- **LangChain Integration**: Leverages `ChatOllama` and standard LangChain messages (`HumanMessage`, `AIMessage`, `SystemMessage`) for clean model interactions.
-- **Centralized Chat Endpoint**: Single endpoint at `POST /api/chat` handling conversation flows, optional session persistence, and Server-Sent Events (SSE) streaming (`stream: true`).
-- **SQLModel Persistence**: Async SQLite / PostgreSQL session handling storing chat messages and prompt versions.
+- **LangChain Integration**: Leverages `ChatOllama` and standard LangChain messages (`HumanMessage`, `AIMessage`, `SystemMessage`, `ToolMessage`) for clean model interactions.
+- **Dynamic MCP Server Integration**: Plug-and-play Model Context Protocol (MCP) server support loaded from a standardized `mcp_servers.json` configuration file.
+- **RAG Document Ingestion**: Vector storage with chunking, embedding, and retriever-as-a-tool support.
+- **Centralized API Endpoints**:
+  - `POST /chat`: Standard JSON response with multi-step tool execution.
+  - `POST /chat/stream`: Server-Sent Events (SSE) token streaming.
+  - `POST /documents`: RAG document ingestion endpoint.
+  - `GET /health`: Service health check reporting active feature flags.
+- **SQLModel Persistence**: Async SQLite / PostgreSQL session handling.
 - **Alembic Migrations**: Fully configured async migration pipeline (`alembic upgrade head`) wired to SQLModel metadata.
-- **Typed Configuration**: Settings managed via `pydantic-settings` with `.env` override support.
 
 ---
 
@@ -18,38 +23,46 @@ A streamlined, production-ready AI chat service scaffolded with **FastAPI**, **L
 ├── Makefile                 # Development, migration, and testing workflows
 ├── alembic.ini              # Alembic migration configuration
 ├── pyproject.toml / requirements.txt
+├── mcp_servers.json         # Standardized MCP servers configuration
 ├── .env.sample              # Environment variable template
 ├── .gitignore
 ├── README.md
 │
-├── src/
-│   └── agent/
-│       ├── __init__.py
-│       ├── main.py          # FastAPI application factory and lifespan
-│       ├── settings.py      # Typed settings and environment configuration
-│       ├── core/
-│       │   ├── __init__.py
-│       │   └── service.py   # LangChain ChatService (ainvoke / astream)
-│       ├── api/
-│       │   ├── __init__.py
-│       │   ├── routes_chat.py # Centralized /api/chat endpoint
-│       │   ├── schemas.py   # Request and response models
-│       │   └── dependencies.py # FastAPI dependency injection
-│       └── db/
-│           ├── __init__.py
-│           ├── models.py    # SQLModel models (PromptVersion, ChatMessage)
-│           ├── session.py   # Async database engine and session generator
-│           └── repositories.py # Async database queries and persistence
+├── app/
+│   ├── main.py              # FastAPI application factory and lifespan
+│   ├── config.py            # Typed settings and environment configuration
+│   ├── db.py                # Async database engine and session generator
+│   ├── api/
+│   │   ├── deps.py          # Shared dependencies (agent, vector store, session)
+│   │   └── routes/
+│   │       ├── chat.py      # /chat, /chat/stream
+│   │       └── documents.py # /documents (RAG ingest)
+│   ├── agent/
+│   │   ├── llm.py           # ChatOllama setup
+│   │   ├── builder.py       # Assembles agent with tools and tool-calling loop
+│   │   └── prompts.py       # System and chat prompt templates
+│   ├── tools/
+│   │   ├── registry.py      # Aggregates local, RAG, and MCP tools
+│   │   ├── local.py         # Plain @tool functions
+│   │   ├── mcp.py           # Standardized MCP server loader
+│   │   └── rag.py           # Retriever wrapped as a tool
+│   ├── rag/
+│   │   ├── store.py         # Vector store initialization (InMemory/Chroma/FAISS)
+│   │   ├── ingest.py        # Load, chunk, embed
+│   │   └── embeddings.py    # OllamaEmbeddings
+│   └── schemas/
+│       ├── chat.py          # Chat & Document request/response models
+│       └── mcp.py           # Standardized MCP configuration schema
 │
 ├── migrations/              # Alembic migration scripts
 │   ├── env.py
-│   ├── script.py.mako
 │   └── versions/
 │
 ├── tests/                   # Automated unit test suite
-│   ├── test_api.py          # API route tests (/health, /api/chat)
+│   ├── test_api.py          # API route tests (/health, /chat, /documents)
 │   ├── test_db.py           # SQLModel database operations tests
-│   └── test_service.py      # LangChain ChatService tests
+│   ├── test_agent.py        # Agent runner, local tools, and MCP schema tests
+│   └── test_rag.py          # RAG chunking and vector retrieval tests
 │
 └── data/                    # Runtime storage (gitignored)
     └── app.db               # SQLite database
@@ -57,17 +70,50 @@ A streamlined, production-ready AI chat service scaffolded with **FastAPI**, **L
 
 ---
 
+## Configuring MCP Servers (`mcp_servers.json`)
+
+MCP servers are defined in `mcp_servers.json` in the standard multi-platform format (identical to Claude Desktop, Cursor, and VS Code):
+
+```json
+{
+  "mcpServers": {
+    "git": {
+      "command": "python",
+      "args": ["-m", "mcp_server_git", "--repository", "."],
+      "env": {
+        "GIT_AUTHOR_NAME": "SankalpPimpalkar",
+        "GIT_AUTHOR_EMAIL": "sankalp.pimpalkar.dev@gmail.com"
+      }
+    },
+    "filesystem": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "./data"]
+    },
+    "remote_sse_service": {
+      "url": "http://localhost:8001/sse"
+    }
+  }
+}
+```
+
+### Schema Features:
+- **`stdio` (local subprocess)**: Provide `"command"` and optional `"args"`, `"env"`, `"cwd"`.
+- **`sse` (HTTP SSE endpoint)**: Provide `"url"` and optional `"headers"`.
+- **`disabled: true`**: Temporarily disable any server without deleting its config.
+- **Environment expansion**: Automatically resolves `$VAR` or `${VAR}` within `args` and `env`.
+
+Enable MCP tools in `.env`:
+```env
+ENABLE_TOOLS=True
+ENABLE_MCP=True
+```
+
+---
+
 ## Quickstart
 
-### 1. Prerequisites
-- Python 3.10+
-- Ollama running locally (`ollama run gemma4:12b` or your chosen model)
-
-### 2. Setup
+### 1. Setup
 ```bash
-# Clone the repository and enter directory
-cd ai-agent
-
 # Create virtual environment and install dependencies
 python3 -m venv .venv
 source .venv/bin/activate
@@ -77,13 +123,12 @@ make install
 cp .env.sample .env
 ```
 
-### 3. Database Migrations
-Apply database migrations using Alembic:
+### 2. Database Migrations
 ```bash
 make migrate
 ```
 
-### 4. Run the Application
+### 3. Run the Application
 ```bash
 # Start development server with auto-reload
 make dev
@@ -91,53 +136,12 @@ make dev
 # Or run on production host:port
 make start
 ```
-The API documentation is accessible at: `http://localhost:8000/docs`
-
----
-
-## API Endpoints
-
-### 1. Health Check
-`GET /health`
-```json
-{
-  "status": "ok",
-  "app_name": "ai-agent"
-}
-```
-
-### 2. Centralized Chat Endpoint
-`POST /api/chat`
-
-**Request Body:**
-```json
-{
-  "message": "Hello, how does LangChain manage chat prompts?",
-  "session_id": "user-session-123",
-  "stream": false
-}
-```
-
-**Response Body:**
-```json
-{
-  "response": "LangChain manages chat prompts by formatting a sequence of messages (SystemMessage, HumanMessage, AIMessage)...",
-  "session_id": "user-session-123",
-  "model": "gemma4:12b"
-}
-```
-
-**Streaming Request (SSE):**
-Set `"stream": true` in the JSON payload to receive Server-Sent Events (`text/event-stream`).
+API Documentation: `http://localhost:8000/docs`
 
 ---
 
 ## Running Tests
-Run the test suite:
 ```bash
 make test
-```
-Or for verbose test output:
-```bash
 make test-verbose
 ```

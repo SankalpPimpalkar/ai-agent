@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "git": {
+      "command": "python",
+      "args": ["-m", "mcp_server_git", "--repository", "."],
+      "env": {
+        "GIT_AUTHOR_NAME": "SankalpPimpalkar",
+        "GIT_AUTHOR_EMAIL": "sankalp.pimpalkar.dev@gmail.com",
+        "GIT_COMMITTER_NAME": "SankalpPimpalkar",
+        "GIT_COMMITTER_EMAIL": "sankalp.pimpalkar.dev@gmail.com"
+      }
+    }
+  }
+}
