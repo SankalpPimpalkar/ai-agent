@@ -1,8 +1,15 @@
 import io
+import tempfile
 import unittest
 import zipfile
+from langchain_chroma import Chroma
 from langchain_core.vectorstores import InMemoryVectorStore
-from app.rag.ingest import chunk_text, extract_text_from_file, ingest_document
+from app.rag.ingest import (
+    chunk_text,
+    delete_document_from_store,
+    extract_text_from_file,
+    ingest_document,
+)
 from app.rag.store import get_vector_store, reset_vector_store
 
 
@@ -65,13 +72,52 @@ class TestRagPipeline(unittest.IsolatedAsyncioTestCase):
 
     async def test_ingest_and_retrieve(self):
         content = "LangChain provides abstractions for LLMs, prompt templates, and vector stores."
-        count = await ingest_document(content, vector_store=self.store)
+        doc_id, count = await ingest_document(content, vector_store=self.store)
         self.assertGreaterEqual(count, 1)
+        self.assertTrue(bool(doc_id))
 
         retriever = self.store.as_retriever(search_kwargs={"k": 1})
         docs = await retriever.ainvoke("What does LangChain provide?")
         self.assertGreater(len(docs), 0)
         self.assertIn("LangChain", docs[0].page_content)
+
+    async def test_delete_document_from_store(self):
+        content = "Confidential document to be deleted."
+        doc_id, count = await ingest_document(content, doc_id="doc-to-del", vector_store=self.store)
+        self.assertEqual(doc_id, "doc-to-del")
+
+        retriever = self.store.as_retriever(search_kwargs={"k": 2})
+        docs_before = await retriever.ainvoke("Confidential")
+        self.assertGreater(len(docs_before), 0)
+
+        # Delete document entirely
+        await delete_document_from_store(doc_id=doc_id, chunks_count=count, vector_store=self.store)
+
+        docs_after = await retriever.ainvoke("Confidential")
+        self.assertEqual(len(docs_after), 0)
+
+    async def test_chroma_persistent_store(self):
+        temp_dir = tempfile.mkdtemp()
+        chroma_store = Chroma(
+            collection_name="test_persistent",
+            embedding_function=self.embeddings,
+            persist_directory=temp_dir,
+        )
+        doc_id, count = await ingest_document(
+            "Persistent information in ChromaDB.",
+            doc_id="chroma-doc-1",
+            vector_store=chroma_store,
+        )
+        self.assertEqual(doc_id, "chroma-doc-1")
+
+        search_res = await chroma_store.asimilarity_search("Persistent", k=1)
+        self.assertGreater(len(search_res), 0)
+        self.assertIn("Persistent information", search_res[0].page_content)
+
+        # Delete cleanly using Chroma
+        await delete_document_from_store(doc_id="chroma-doc-1", vector_store=chroma_store)
+        search_after = await chroma_store.asimilarity_search("Persistent", k=1)
+        self.assertEqual(len(search_after), 0)
 
 
 if __name__ == "__main__":

@@ -100,6 +100,7 @@ class TestApiEndpoints(unittest.TestCase):
             data = res.json()
             self.assertEqual(data["status"], "success")
             self.assertGreaterEqual(data["chunks_count"], 1)
+            self.assertTrue(data.get("doc_id"))
 
     def test_documents_endpoint_file_upload(self):
         rag_settings = Settings(ENABLE_RAG=True)
@@ -116,6 +117,42 @@ class TestApiEndpoints(unittest.TestCase):
             self.assertEqual(data["status"], "success")
             self.assertGreaterEqual(data["chunks_count"], 1)
             self.assertIn("manual.txt", data["message"])
+            self.assertTrue(data.get("doc_id"))
+
+    def test_documents_list_and_delete(self):
+        rag_settings = Settings(ENABLE_RAG=True)
+        rag_app = build_app(app_settings=rag_settings, agent_runner=self.agent_runner)
+        fake_store = InMemoryVectorStore(FakeEmbeddings())
+        from app.api.deps import get_vector_store_dep
+        rag_app.dependency_overrides[get_vector_store_dep] = lambda: fake_store
+
+        with TestClient(rag_app) as client:
+            custom_id = "test-doc-delete-123"
+            payload = {"content": "Content to be deleted soon.", "doc_id": custom_id}
+            post_res = client.post("/documents", json=payload)
+            self.assertEqual(post_res.status_code, 200)
+            self.assertEqual(post_res.json()["doc_id"], custom_id)
+
+            # Check document appears in list
+            list_res = client.get("/documents")
+            self.assertEqual(list_res.status_code, 200)
+            docs = list_res.json()
+            found = [d for d in docs if d["doc_id"] == custom_id]
+            self.assertEqual(len(found), 1)
+
+            # Delete the document
+            del_res = client.delete(f"/documents/{custom_id}")
+            self.assertEqual(del_res.status_code, 200)
+            del_data = del_res.json()
+            self.assertEqual(del_data["status"], "success")
+            self.assertEqual(del_data["doc_id"], custom_id)
+
+            # Verify it is no longer in list
+            list_res2 = client.get("/documents")
+            self.assertEqual(list_res2.status_code, 200)
+            docs2 = list_res2.json()
+            found2 = [d for d in docs2 if d["doc_id"] == custom_id]
+            self.assertEqual(len(found2), 0)
 
     def test_documents_endpoint_empty_payload(self):
         rag_settings = Settings(ENABLE_RAG=True)

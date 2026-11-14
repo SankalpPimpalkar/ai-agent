@@ -42,7 +42,9 @@ class Settings(BaseSettings):
     MAX_CONTEXT_MESSAGES: int = 20
     SUMMARY_KEEP_RECENT: int = 4
 
-    # RAG settings
+    # RAG & Chroma settings
+    CHROMA_PERSIST_DIRECTORY: str = str(DATA_DIR / "chroma")
+    CHROMA_COLLECTION_NAME: str = "rag_documents"
     EMBEDDING_MODEL: str = "nomic-embed-text"
     CHUNK_SIZE: int = 1000
     CHUNK_OVERLAP: int = 200

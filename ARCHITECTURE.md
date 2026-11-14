@@ -164,9 +164,9 @@ sequenceDiagram
 
 ---
 
-### 2.2 RAG Ingestion & Retrieval Flow
+### 2.2 RAG Ingestion, Retrieval & Deletion Flow
 
-When document indexing and knowledge base retrieval are enabled (`ENABLE_RAG=True`), `POST /documents` supports both **raw JSON text** and **multipart file uploads** (`.txt`, `.md`, `.pdf`, `.docx`) in a single route:
+When document indexing and knowledge base retrieval are enabled (`ENABLE_RAG=True`), `POST /documents` supports both **raw JSON text** and **multipart file uploads** (`.txt`, `.md`, `.pdf`, `.docx`), assigning each upload a unique `doc_id`. Ingested chunks are tagged and persisted in **ChromaDB** on disk (`data/chroma`). In addition, `DELETE /documents/{doc_id}` allows clean, total removal of any document and its chunk vectors.
 
 ```mermaid
 sequenceDiagram
@@ -174,24 +174,26 @@ sequenceDiagram
     actor Admin as Admin / Ingestion Client
     participant DocRoute as app/api/routes/documents.py
     participant Ingest as app/rag/ingest.py
-    participant Store as app/rag/store.py (VectorStore)
+    participant DB as SQLite (UploadedDocument)
     participant Embeddings as app/rag/embeddings.py (OllamaEmbeddings)
+    participant Chroma as ChromaDB (data/chroma)
 
-    alt Option A: Multipart File Upload (.txt, .md, .pdf, .docx)
-        Admin->>DocRoute: POST /documents (multipart/form-data with file)
-        DocRoute->>Ingest: extract_text_from_file(filename, file_bytes)
-        Ingest-->>DocRoute: Extracted text content
-    else Option B: Raw Text JSON Payload
-        Admin->>DocRoute: POST /documents {"content": "...", "metadata": {...}}
+    alt Document Ingestion (POST /documents)
+        Admin->>DocRoute: POST /documents (JSON text or multipart file)
+        DocRoute->>DocRoute: Assign unique doc_id (UUID or provided)
+        DocRoute->>Ingest: extract_text_from_file(file) or raw text
+        DocRoute->>Ingest: chunk_text(content) -> chunks tagged with doc_id
+        Ingest->>Embeddings: aembed_documents(chunks)
+        Embeddings-->>Ingest: Embeddings vectors
+        Ingest->>Chroma: aadd_documents(chunks, ids=["doc_id_0", ...])
+        Ingest->>DB: record_uploaded_document(doc_id, filename, chunks_count)
+        DocRoute-->>Admin: 200 OK {"status": "success", "doc_id": "...", "chunks_count": N}
+    else Document Deletion (DELETE /documents/{doc_id})
+        Admin->>DocRoute: DELETE /documents/{doc_id}
+        DocRoute->>Chroma: adelete(where={"doc_id": doc_id}) / adelete(ids)
+        DocRoute->>DB: delete_uploaded_document_record(doc_id)
+        DocRoute-->>Admin: 200 OK {"status": "success", "doc_id": "...", "message": "..."}
     end
-
-    DocRoute->>Ingest: ingest_document(content, metadata)
-    Ingest->>Ingest: chunk_text(content, chunk_size, chunk_overlap)
-    Ingest->>Embeddings: aembed_documents(chunks)
-    Embeddings-->>Ingest: Embeddings vectors
-    Ingest->>Store: aadd_documents(docs)
-    Store-->>DocRoute: Success (chunks_count)
-    DocRoute-->>Admin: 200 OK {"status": "success", "chunks_count": N, "message": "..."}
 ```
 
 ---
@@ -233,7 +235,7 @@ sequenceDiagram
 - **`app/api/routes/conversations.py`**:
   Conversation history routes (`GET /conversations`, `GET /conversations/{session_id}`, `DELETE /conversations/{session_id}`) listing active sessions with their auto-updated topic summary and last message timestamp.
 - **`app/api/routes/documents.py`**:
-  Unified RAG document ingestion route (`POST /documents`). Supports both raw text payloads (`application/json`) and file uploads (`multipart/form-data`) in a single route. Extracts, chunks, and stores documents when `ENABLE_RAG=True`.
+  RAG document management routes (`POST /documents`, `GET /documents`, `DELETE /documents/{doc_id}`). Supports both raw text payloads (`application/json`) and file uploads (`multipart/form-data`) in a single route, assigns/accepts a unique `doc_id`, lists indexed documents, and allows clean deletion from ChromaDB and the database registry.
 
 #### Agent & Model Orchestration (`app/agent/`)
 
@@ -264,9 +266,9 @@ sequenceDiagram
 #### Retrieval-Augmented Generation (`app/rag/`)
 
 - **`app/rag/store.py`**:
-  Vector store provider. Initializes an `InMemoryVectorStore` (swappable with Chroma or FAISS) and exposes singleton retrieval helpers.
+  Persistent vector store provider backed by **ChromaDB** (`langchain-chroma`). Automatically persists embeddings to disk under `data/chroma/`, with dependency injection support for test overrides.
 - **`app/rag/ingest.py`**:
-  Document text extraction (`extract_text_from_file` supporting text/markdown, PDF via `pypdf`, and Word `.docx` via standard XML parsing), text chunking (`chunk_text`), and vector store indexing (`ingest_document`).
+  Document text extraction (`extract_text_from_file` supporting text/markdown, PDF via `pypdf`, and Word `.docx` via standard XML parsing), text chunking (`chunk_text`), vector store indexing (`ingest_document`), and clean deletion (`delete_document_from_store`).
 - **`app/rag/embeddings.py`**:
   Embeddings provider wrapping LangChain's `OllamaEmbeddings`.
 
@@ -274,8 +276,10 @@ sequenceDiagram
 
 - **`app/models/conversation.py`**:
   SQLModel table definition (`ConversationSession`) tracking `session_id`, auto-updated `summary`, `last_message_at`, `created_at`, and `message_count`.
+- **`app/models/document.py`**:
+  SQLModel table definition (`UploadedDocument`) tracking `doc_id`, `filename`, `source`, `chunks_count`, and `created_at`.
 - **`app/schemas/chat.py`**:
-  Pydantic models for chat requests (`ChatRequest`), responses (`ChatResponse`), document ingestion (`DocumentIngestRequest`, `DocumentIngestResponse`), conversation listings (`ConversationSessionItem`, `ConversationDetailResponse`), and health status.
+  Pydantic models for chat requests (`ChatRequest`), responses (`ChatResponse`), document ingestion (`DocumentIngestRequest`, `DocumentIngestResponse`), document deletion (`DocumentDeleteResponse`, `UploadedDocumentItem`), conversation listings (`ConversationSessionItem`, `ConversationDetailResponse`), and health status.
 - **`app/schemas/mcp.py`**:
   Strict schema models (`MCPServerConfig`, `MCPConfigFile`) validating `stdio` and `sse` MCP configurations, performing environment variable expansions, and enforcing platform standards.
 

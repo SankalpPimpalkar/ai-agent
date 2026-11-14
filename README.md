@@ -123,23 +123,69 @@ ENABLE_MCP=True
 
 ---
 
-## Document Ingestion (RAG Knowledge Base)
+## Document Management & RAG Knowledge Base (ChromaDB)
 
-The `POST /documents` endpoint accepts **both** raw text and uploaded document files in a single unified route when `ENABLE_RAG=True`:
+Persistent vector search is powered by **ChromaDB** (`langchain-chroma`) persisting embeddings under `data/chroma/`. Every ingested document receives or is assigned a unique `doc_id`.
 
-### Option 1: Raw Text via JSON
+### 1. Ingest Documents (`POST /documents`)
+
+The endpoint accepts **both** raw JSON text and multipart file uploads in a single route:
+
+#### Option 1: Raw Text via JSON
 ```bash
 curl -X POST http://localhost:8000/documents \
   -H "Content-Type: application/json" \
-  -d '{"content": "LangChain enables modular LLM architectures.", "metadata": {"source": "manual"}}'
+  -d '{"content": "LangChain enables modular LLM architectures.", "doc_id": "langchain-guide", "metadata": {"source": "manual"}}'
 ```
 
-### Option 2: File Upload (PDF, Word DOCX, Markdown, Text, Code)
+#### Option 2: File Upload (PDF, Word DOCX, Markdown, Text, Code)
 ```bash
 # Upload a PDF, Word document (.docx), Markdown or text file
 curl -X POST http://localhost:8000/documents \
   -F "file=@sample_report.pdf" \
+  -F "doc_id=quarterly-report-2026" \
   -F 'metadata={"category": "finance"}'
+```
+
+*Response:*
+```json
+{
+  "status": "success",
+  "doc_id": "quarterly-report-2026",
+  "chunks_count": 8,
+  "message": "Successfully ingested 8 chunk(s) from 'sample_report.pdf' into knowledge base."
+}
+```
+
+### 2. List All Uploaded Documents (`GET /documents`)
+```bash
+curl http://localhost:8000/documents
+```
+*Response:*
+```json
+[
+  {
+    "doc_id": "quarterly-report-2026",
+    "filename": "sample_report.pdf",
+    "source": "sample_report.pdf",
+    "chunks_count": 8,
+    "created_at": "2026-11-14T18:30:00Z"
+  }
+]
+```
+
+### 3. Delete Document (`DELETE /documents/{doc_id}`)
+Deletes the document entirely and cleanly from ChromaDB (all chunk embeddings) and removes the registry entry:
+```bash
+curl -X DELETE http://localhost:8000/documents/quarterly-report-2026
+```
+*Response:*
+```json
+{
+  "status": "success",
+  "doc_id": "quarterly-report-2026",
+  "message": "Successfully deleted document 'quarterly-report-2026' and all its chunks from vector database."
+}
 ```
 
 ---

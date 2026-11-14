@@ -19,13 +19,29 @@ class ChatResponse(BaseModel):
 
 class DocumentIngestRequest(BaseModel):
     content: str = Field(..., min_length=1, description="Raw text content of the document to ingest")
+    doc_id: Optional[str] = Field(default=None, description="Optional custom unique document ID")
     metadata: Optional[Dict[str, Any]] = Field(default_factory=dict, description="Metadata key-values for the document")
 
 
 class DocumentIngestResponse(BaseModel):
     status: str
+    doc_id: str
     chunks_count: int
     message: str
+
+
+class DocumentDeleteResponse(BaseModel):
+    status: str
+    doc_id: str
+    message: str
+
+
+class UploadedDocumentItem(BaseModel):
+    doc_id: str
+    filename: str
+    source: str
+    chunks_count: int
+    created_at: datetime
 
 
 class HealthResponse(BaseModel):
