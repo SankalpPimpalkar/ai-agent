@@ -6,6 +6,7 @@ from app.agent.memory import init_checkpointer
 from app.api.routes.chat import router as chat_router
 from app.api.routes.conversations import router as conversations_router
 from app.api.routes.documents import router as documents_router
+from app.api.routes.evals import router as evals_router
 from app.config import Settings, settings
 from app.db import init_db
 from app.schemas.chat import HealthResponse
@@ -54,6 +55,7 @@ def build_app(
     application.include_router(chat_router)
     application.include_router(conversations_router)
     application.include_router(documents_router)
+    application.include_router(evals_router)
     return application
 
 

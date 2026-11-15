@@ -69,3 +69,21 @@ class MessageItem(BaseModel):
 
 class ConversationDetailResponse(ConversationSessionItem):
     messages: List[MessageItem] = []
+
+
+class RetrievedChunkItem(BaseModel):
+    chunk_index: int
+    content: str
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+    score: Optional[float] = None
+
+
+class DocumentSearchRequest(BaseModel):
+    query: str = Field(..., min_length=1, description="Search query to retrieve matching chunks")
+    k: int = Field(default=4, ge=1, le=50, description="Number of chunks to return")
+
+
+class DocumentSearchResponse(BaseModel):
+    query: str
+    total_chunks: int
+    chunks: List[RetrievedChunkItem]

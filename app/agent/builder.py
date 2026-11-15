@@ -35,10 +35,12 @@ class AgentRunner:
         llm: Optional[BaseChatModel] = None,
         tools: Optional[List[Any]] = None,
         checkpointer: Optional[BaseCheckpointSaver] = None,
+        db_engine: Optional[Any] = None,
     ):
         self._llm = llm
         self._tools = tools
         self._checkpointer = checkpointer
+        self._db_engine = db_engine
         self.last_session_id: Optional[str] = None
 
     async def get_tools(self) -> List[Any]:
@@ -75,7 +77,7 @@ class AgentRunner:
         msgs.append(HumanMessage(content=message))
         return msgs
 
-    async def execute(
+    async def execute_detailed(
         self,
         message: str,
         session_id: Optional[str] = None,
@@ -83,10 +85,15 @@ class AgentRunner:
         system_prompt: Optional[str] = None,
         model: Optional[str] = None,
         max_iterations: int = 5,
-    ) -> str:
+    ) -> dict:
         """
-        Invokes the model, automatically handles tool calling iterations if
-        tools are invoked, applies persistent memory and middlewares, and returns the final assistant answer.
+        Invokes the model, handles tool calling iterations, applies persistent memory
+        and middlewares, and returns a detailed execution dict containing:
+        - 'response': final assistant answer string
+        - 'session_id': active session ID
+        - 'messages': full list of messages from this turn
+        - 'retrieved_contexts': list of raw texts retrieved via search tools
+        - 'tool_calls': list of executed tool calls
         """
         active_session_id = session_id or str(uuid.uuid4())
         self.last_session_id = active_session_id
@@ -123,6 +130,8 @@ class AgentRunner:
         messages = await summarize_context_middleware(messages, llm=active_llm)
 
         final_content = "Task completed."
+        retrieved_contexts: List[str] = []
+        executed_tool_calls: List[dict] = []
 
         for _ in range(max_iterations):
             response = await runnable.ainvoke(messages)
@@ -141,6 +150,7 @@ class AgentRunner:
                 tool_name = tc.get("name")
                 tool_args = tc.get("args", {})
                 tool_id = tc.get("id") or tool_name
+                executed_tool_calls.append({"name": tool_name, "args": tool_args, "id": tool_id})
 
                 if tool_name in tools_map:
                     try:
@@ -149,6 +159,10 @@ class AgentRunner:
                         tool_result = f"Error executing tool {tool_name}: {err}"
                 else:
                     tool_result = f"Error: unknown tool '{tool_name}'"
+
+                # Capture retrieved context from search/knowledge base tools
+                if "knowledge_base" in tool_name.lower() or "search" in tool_name.lower() or "retriev" in tool_name.lower():
+                    retrieved_contexts.append(str(tool_result))
 
                 messages.append(
                     ToolMessage(
@@ -168,11 +182,41 @@ class AgentRunner:
                     messages=messages,
                     latest_user_message=message,
                     llm=active_llm,
+                    db_engine=self._db_engine,
                 )
             except Exception:
                 pass
 
-        return final_content
+        return {
+            "response": final_content,
+            "session_id": active_session_id,
+            "messages": messages,
+            "retrieved_contexts": retrieved_contexts,
+            "tool_calls": executed_tool_calls,
+        }
+
+    async def execute(
+        self,
+        message: str,
+        session_id: Optional[str] = None,
+        history: Optional[List[BaseMessage]] = None,
+        system_prompt: Optional[str] = None,
+        model: Optional[str] = None,
+        max_iterations: int = 5,
+    ) -> str:
+        """
+        Invokes the model, automatically handles tool calling iterations if
+        tools are invoked, applies persistent memory and middlewares, and returns the final assistant answer.
+        """
+        result = await self.execute_detailed(
+            message=message,
+            session_id=session_id,
+            history=history,
+            system_prompt=system_prompt,
+            model=model,
+            max_iterations=max_iterations,
+        )
+        return result["response"]
 
     async def execute_stream(
         self,

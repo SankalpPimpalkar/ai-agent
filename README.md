@@ -174,7 +174,43 @@ curl http://localhost:8000/documents
 ]
 ```
 
-### 3. Delete Document (`DELETE /documents/{doc_id}`)
+### 3. Fetch Matching Chunks for a Query (`GET /documents/chunks` or `POST /documents/query`)
+Manually inspect what chunks, section headings, metadata, and similarity scores are returned for any user query or prompt:
+
+#### Option 1: Via GET Query Parameters
+```bash
+curl "http://localhost:8000/documents/chunks?query=GDPR+breach+notification+hours&k=3"
+```
+
+#### Option 2: Via POST JSON
+```bash
+curl -X POST http://localhost:8000/documents/query \
+  -H "Content-Type: application/json" \
+  -d '{"query": "GDPR breach notification hours", "k": 3}'
+```
+
+*Response:*
+```json
+{
+  "query": "GDPR breach notification hours",
+  "total_chunks": 3,
+  "chunks": [
+    {
+      "chunk_index": 1,
+      "content": "## Section: ShopNest Privacy Policy > 7. Security\n\nShopNest must notify supervisory authorities within 72 hours of becoming aware of a data breach where GDPR applies.",
+      "metadata": {
+        "doc_id": "quarterly-report-2026",
+        "chunk_index": 0,
+        "section": "ShopNest Privacy Policy > 7. Security",
+        "filename": "privacy_policy.pdf"
+      },
+      "score": 0.2841
+    }
+  ]
+}
+```
+
+### 4. Delete Document (`DELETE /documents/{doc_id}`)
 Deletes the document entirely and cleanly from ChromaDB (all chunk embeddings) and removes the registry entry:
 ```bash
 curl -X DELETE http://localhost:8000/documents/quarterly-report-2026
@@ -239,10 +275,10 @@ cp .env.sample .env
 # Apply pending migrations
 make migrate
 
-# Clean app.db and recreate all tables and migrations from scratch
+# Clean app.db, ChromaDB, and recreate all tables and migrations from scratch
 make db-reset
 
-# Clean app.db and re-apply existing migrations
+# Clean app.db, ChromaDB, and re-apply existing migrations
 make db-clean
 ```
 
@@ -255,6 +291,114 @@ make dev
 make start
 ```
 API Documentation: `http://localhost:8000/docs`
+
+---
+
+## RAG Evaluation REST API (`/evals`) & Dashboard Backend
+
+The agent exposes a dedicated `/evals` REST API router designed for dashboard panels to manage evaluation documents, trigger benchmarks, and retrieve metrics. All operations are strictly isolated from production databases (`data/eval/eval_chroma` and `data/eval/eval_app.db`).
+
+### 1. Upload Documents to Evaluation Knowledge Base (`POST /evals/documents`)
+Upload raw text or files (`.pdf`, `.docx`, `.txt`, `.md`) to the evaluation Chroma DB:
+```bash
+# Upload via JSON raw text
+curl -X POST http://localhost:8000/evals/documents \
+  -H "Content-Type: application/json" \
+  -d '{"content": "ChromaDB evaluation documentation...", "doc_id": "eval-doc-1"}'
+
+# Upload via file (PDF, DOCX, TXT, MD)
+curl -X POST http://localhost:8000/evals/documents \
+  -F "file=@eval_manual.pdf" \
+  -F "doc_id=manual-v1"
+```
+
+### 2. List Evaluation Documents (`GET /evals/documents`)
+```bash
+curl http://localhost:8000/evals/documents
+```
+
+### 3. Delete Evaluation Document (`DELETE /evals/documents/{doc_id}`)
+Cleanly removes a document and its chunks from the evaluation Chroma DB:
+```bash
+curl -X DELETE http://localhost:8000/evals/documents/eval-doc-1
+```
+
+### 4. Run Evaluation Benchmark (`POST /evals/run`)
+Triggers LLM-as-a-judge evaluation across **Correctness**, **Answer Relevance**, **Groundedness**, and **Retrieval Relevance**, automatically syncing to LangSmith when `LANGCHAIN_API_KEY` is configured:
+```bash
+curl -X POST http://localhost:8000/evals/run \
+  -H "Content-Type: application/json" \
+  -d '{"clean_on_start": false}'
+```
+*Response for Dashboard Panel:*
+```json
+{
+  "status": "success",
+  "timestamp": "2026-11-15T13:00:00Z",
+  "dataset_name": "rag-agent-evaluation",
+  "total_cases": 6,
+  "metrics_summary": {
+    "correctness": 0.967,
+    "answer_relevance": 0.983,
+    "groundedness": 0.950,
+    "retrieval_relevance": 0.933,
+    "overall_score": 0.958
+  },
+  "cases": [
+    {
+      "id": "tc-001",
+      "question": "Where does ChromaDB persist vector embeddings by default?",
+      "reference_answer": "Under the directory 'data/chroma' with collection name 'rag_documents'.",
+      "agent_response": "ChromaDB persists vector embeddings in data/chroma...",
+      "metrics": {
+        "correctness": {"score": 1.0, "reasoning": "..."},
+        "answer_relevance": {"score": 1.0, "reasoning": "..."},
+        "groundedness": {"score": 1.0, "reasoning": "..."},
+        "retrieval_relevance": {"score": 1.0, "reasoning": "..."}
+      }
+    }
+  ]
+}
+```
+
+### 5. Fetch Latest Evaluation Results (`GET /evals/results`)
+Instantly retrieves the latest evaluation report for dashboard rendering without re-running tests:
+```bash
+curl http://localhost:8000/evals/results
+```
+
+---
+
+## Dataset Definition (`eval/test_cases.yaml`)
+Benchmark test cases are configured in YAML (evaluation documents are uploaded via `POST /evals/documents`):
+```yaml
+test_cases:
+  - id: "tc-001"
+    question: "Where does ChromaDB persist vector embeddings by default?"
+    reference_answer: "Under the directory 'data/chroma' with collection name 'rag_documents'."
+    tags: ["rag", "chromadb"]
+```
+
+### 3. Strict Database Isolation
+The evaluation harness uses **completely separate test databases**:
+- SQLite: `data/eval/eval_app.db`
+- ChromaDB: `data/eval/eval_chroma` (collection: `eval_rag_documents`)
+- **Main databases (`data/app.db` and `data/chroma`) remain completely untouched.**
+
+### 4. Running Evaluations
+```bash
+# Run local evaluation and benchmark
+make eval
+
+# Or with custom flags
+.venv/bin/python -m eval.runner
+```
+
+When `LANGCHAIN_API_KEY` is present in your `.env`, the evaluation suite automatically uploads/syncs test cases to a **LangSmith dataset** (`rag-agent-evaluation`) and logs benchmark experiment results to LangSmith.
+
+Detailed evaluation reports are generated in both JSON and Markdown:
+- `eval/results/eval_report.json`
+- `eval/results/eval_report.md`
 
 ---
 

@@ -6,6 +6,7 @@ __pycache__/
 # Runtime state data
 data/
 evals/runs/
+eval/results/
 agent-tools
 artifacts
 memory

@@ -236,6 +236,8 @@ sequenceDiagram
   Conversation history routes (`GET /conversations`, `GET /conversations/{session_id}`, `DELETE /conversations/{session_id}`) listing active sessions with their auto-updated topic summary and last message timestamp.
 - **`app/api/routes/documents.py`**:
   RAG document management routes (`POST /documents`, `GET /documents`, `DELETE /documents/{doc_id}`). Supports both raw text payloads (`application/json`) and file uploads (`multipart/form-data`) in a single route, assigns/accepts a unique `doc_id`, lists indexed documents, and allows clean deletion from ChromaDB and the database registry.
+- **`app/api/routes/evals.py`**:
+  Dedicated evaluation REST API (`/evals`) for dashboard panels: document ingestion (`POST /evals/documents`), document listing (`GET /evals/documents`), deletion (`DELETE /evals/documents/{doc_id}`), benchmark execution (`POST /evals/run`), and latest results retrieval (`GET /evals/results`) operating strictly on isolated evaluation databases.
 
 #### Agent & Model Orchestration (`app/agent/`)
 
@@ -268,7 +270,7 @@ sequenceDiagram
 - **`app/rag/store.py`**:
   Persistent vector store provider backed by **ChromaDB** (`langchain-chroma`). Automatically persists embeddings to disk under `data/chroma/`, with dependency injection support for test overrides.
 - **`app/rag/ingest.py`**:
-  Document text extraction (`extract_text_from_file` supporting text/markdown, PDF via `pypdf`, and Word `.docx` via standard XML parsing), text chunking (`chunk_text`), vector store indexing (`ingest_document`), and clean deletion (`delete_document_from_store`).
+  Document text extraction (`extract_text_from_file` supporting text/markdown, PDF via `pymupdf4llm` with table and Markdown layout extraction, `pdfplumber` structured table fallback, `pypdf`, and Word `.docx` with XML heading styles), section-aware text chunking (`chunk_text_by_sections` prepending heading breadcrumb paths and repeating Markdown table headers on split tables), vector store indexing with section metadata (`ingest_document`), and clean deletion (`delete_document_from_store`).
 - **`app/rag/embeddings.py`**:
   Embeddings provider wrapping LangChain's `OllamaEmbeddings`.
 
@@ -282,6 +284,25 @@ sequenceDiagram
   Pydantic models for chat requests (`ChatRequest`), responses (`ChatResponse`), document ingestion (`DocumentIngestRequest`, `DocumentIngestResponse`), document deletion (`DocumentDeleteResponse`, `UploadedDocumentItem`), conversation listings (`ConversationSessionItem`, `ConversationDetailResponse`), and health status.
 - **`app/schemas/mcp.py`**:
   Strict schema models (`MCPServerConfig`, `MCPConfigFile`) validating `stdio` and `sse` MCP configurations, performing environment variable expansions, and enforcing platform standards.
+- **`app/schemas/evals.py`**:
+  Pydantic models for evaluation execution requests (`EvalRunRequest`), metrics summaries (`EvalMetricsSummary`), case outcomes (`EvalCaseResult`), and evaluation benchmark responses (`EvalRunResponse`).
+
+#### Evaluation Subsystem (`eval/`)
+
+- **`eval/test_cases.yaml`**:
+  Declarative evaluation dataset containing seed knowledge base documents and question/reference answer test pairs with metadata and tags.
+- **`eval/config.py`**:
+  Evaluation configuration ensuring strict isolation with dedicated test databases (`data/eval/eval_app.db` and `data/eval/eval_chroma`).
+- **`eval/dataset_loader.py`**:
+  Loads YAML test cases and syncs dataset examples to LangSmith (`langsmith.Client`).
+- **`eval/evaluators.py`**:
+  LLM-as-a-judge evaluators for the 4 core RAG metrics:
+  - **Correctness**: Compares agent output to reference answer.
+  - **Answer Relevance**: Checks if the answer directly addresses the user question.
+  - **Groundedness**: Verifies claims against retrieved context (hallucination detection).
+  - **Retrieval Relevance**: Measures context precision of retrieved chunks.
+- **`eval/runner.py`**:
+  Orchestrates evaluation runs, outputs terminal summary tables, triggers LangSmith benchmarks, and exports reports to `eval/results/`.
 
 ---
 

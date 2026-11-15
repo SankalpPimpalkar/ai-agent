@@ -165,6 +165,53 @@ class TestApiEndpoints(unittest.TestCase):
             res = client.post("/documents", json={"content": "  "})
             self.assertEqual(res.status_code, 422)
 
+    def test_documents_fetch_chunks_get_and_post(self):
+        rag_settings = Settings(ENABLE_RAG=True)
+        rag_app = build_app(app_settings=rag_settings, agent_runner=self.agent_runner)
+        fake_store = InMemoryVectorStore(FakeEmbeddings())
+        from app.api.deps import get_vector_store_dep
+        rag_app.dependency_overrides[get_vector_store_dep] = lambda: fake_store
+
+        with TestClient(rag_app) as client:
+            # 1. Ingest sample document
+            doc_content = "# GDPR Policy\n\nShopNest notifies authorities within 72 hours."
+            ingest_res = client.post("/documents", json={"content": doc_content, "doc_id": "gdpr-doc"})
+            self.assertEqual(ingest_res.status_code, 200)
+
+            # 2. Fetch chunks via GET /documents/chunks
+            get_res = client.get("/documents/chunks?query=GDPR&k=3")
+            self.assertEqual(get_res.status_code, 200)
+            data = get_res.json()
+            self.assertEqual(data["query"], "GDPR")
+            self.assertGreaterEqual(data["total_chunks"], 1)
+            self.assertIn("ShopNest notifies authorities", data["chunks"][0]["content"])
+            self.assertEqual(data["chunks"][0]["chunk_index"], 1)
+
+            # 3. Fetch chunks via POST /documents/query
+            post_query_res = client.post("/documents/query", json={"query": "72 hours", "k": 2})
+            self.assertEqual(post_query_res.status_code, 200)
+            post_data = post_query_res.json()
+            self.assertEqual(post_data["query"], "72 hours")
+            self.assertGreaterEqual(post_data["total_chunks"], 1)
+
+            # 4. Fetch chunks via POST /documents/chunks
+            post_chunks_res = client.post("/documents/chunks", json={"query": "72 hours", "k": 2})
+            self.assertEqual(post_chunks_res.status_code, 200)
+            self.assertEqual(post_chunks_res.json()["query"], "72 hours")
+
+    def test_documents_fetch_chunks_validation_and_disabled(self):
+        # 1. When RAG is disabled -> 403 Forbidden
+        with TestClient(self.app) as client:
+            res = client.get("/documents/chunks?query=test")
+            self.assertEqual(res.status_code, 403)
+
+        # 2. When query is empty -> 422
+        rag_settings = Settings(ENABLE_RAG=True)
+        rag_app = build_app(app_settings=rag_settings, agent_runner=self.agent_runner)
+        with TestClient(rag_app) as client:
+            res = client.get("/documents/chunks?query=   ")
+            self.assertEqual(res.status_code, 422)
+
 
 if __name__ == "__main__":
     unittest.main()

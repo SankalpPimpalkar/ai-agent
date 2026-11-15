@@ -1,0 +1,435 @@
+# RAG Evaluation Dataset: ShopNest Privacy Policy (26 cases)
+# Documents are uploaded dynamically to eval Chroma DB via POST /evals/documents
+
+test_cases:
+- id: sn-001
+  question: How long does ShopNest retain order history and invoices?
+  reference_answer: Order history and invoices are retained for 7 years, because of tax and accounting law.
+  expected_sources: &id001
+  - shopnest_privacy_policy.pdf
+  key_facts:
+  - Order history and invoices are retained for 7 years
+  - The reason is tax and accounting law
+  must_retrieve:
+  - Order history and invoices
+  acceptable_sections:
+  - Data Retention
+  - Appendix A
+  tags:
+  - easy
+  - retention
+  - table
+- id: sn-002
+  question: Within how many hours must ShopNest notify supervisory authorities of a data breach where GDPR applies?
+  reference_answer: Within 72 hours. Affected users are notified without undue delay.
+  expected_sources: *id001
+  key_facts:
+  - Must notify supervisory authorities within 72 hours where GDPR applies
+  - Affected users are notified without undue delay
+  must_retrieve:
+  - 72 hours to supervisory authorities
+  acceptable_sections:
+  - Security
+  - Appendix A
+  tags:
+  - easy
+  - security
+  - breach
+- id: sn-003
+  question: What is the maximum bug bounty payout?
+  reference_answer: Up to 25,000 USD for critical findings.
+  expected_sources: *id001
+  key_facts:
+  - The bug bounty pays up to 25,000 USD
+  - The payout is for critical findings
+  must_retrieve:
+  - 25,000 USD
+  acceptable_sections:
+  - Security
+  - Appendix A
+  tags:
+  - easy
+  - security
+- id: sn-004
+  question: Does ShopNest honor the Global Privacy Control signal and the Do Not Track header?
+  reference_answer: It honors Global Privacy Control as a valid opt-out of sale and sharing for the browser sending it. It does not treat Do Not Track as an opt-out because there is no industry standard.
+  expected_sources: *id001
+  key_facts:
+  - Honors Global Privacy Control as a valid opt-out of sale and sharing for the browser sending it
+  - Does not treat Do Not Track as an opt-out because there is no industry standard
+  must_retrieve:
+  - Global Privacy Control
+  - Do Not Track
+  acceptable_sections:
+  - Cookies and Tracking Technologies
+  - Appendix A
+  tags:
+  - easy
+  - cookies
+  - negation
+- id: sn-005
+  question: Is biometric data such as fingerprint or face unlock sent to ShopNest servers?
+  reference_answer: No. Biometric data is processed on the user's device and is never sent to ShopNest servers.
+  expected_sources: *id001
+  key_facts:
+  - Biometric data is processed on the user's device
+  - It is never sent to ShopNest servers
+  must_retrieve:
+  - never sent to ShopNest servers
+  acceptable_sections:
+  - Information We Collect
+  - Appendix A
+  tags:
+  - easy
+  - sensitive-data
+  - negation
+- id: sn-006
+  question: What card details does ShopNest store?
+  reference_answer: Full card numbers are tokenized by the payment processor. ShopNest stores only the last 4 digits, the expiry month and year, and the card brand.
+  expected_sources: *id001
+  key_facts:
+  - Full card numbers are tokenized by the payment processor
+  - Only the last 4 digits, expiry month and year, and card brand are stored
+  must_retrieve:
+  - stores only the last 4 digits
+  acceptable_sections:
+  - Information We Collect
+  tags:
+  - easy
+  - payment
+  - sensitive-data
+- id: sn-007
+  question: How long are customer support chats kept compared with support call recordings?
+  reference_answer: Customer support chats are kept for 3 years. Call recordings are kept for 12 months.
+  expected_sources: *id001
+  key_facts:
+  - Customer support chats are kept for 3 years
+  - Support call recordings are kept for 12 months
+  must_retrieve:
+  - Customer support chats
+  - 'Call recordings: 12 months'
+  acceptable_sections:
+  - Data Retention
+  - Appendix A
+  tags:
+  - medium
+  - retention
+  - table
+  - near-duplicate
+- id: sn-008
+  question: What is the default retention period for ShopNest Voice recordings, and can the user shorten it?
+  reference_answer: The default is 18 months. The user can set it to 3 months or delete recordings at any time.
+  expected_sources: *id001
+  key_facts:
+  - Default retention is 18 months
+  - The user can set it to 3 months or delete recordings anytime
+  must_retrieve:
+  - Voice recordings (ShopNest Voice)
+  - 3 months or delete
+  acceptable_sections:
+  - Data Retention
+  - Appendix A
+  tags:
+  - medium
+  - retention
+  - voice
+- id: sn-009
+  question: How long is data from a guest checkout retained?
+  reference_answer: Profile data is kept for 30 days, and order records are kept for 7 years.
+  expected_sources: *id001
+  key_facts:
+  - Guest checkout profile data is kept for 30 days
+  - Guest checkout order records are kept for 7 years
+  must_retrieve:
+  - 30 days for profile data, 7 years for order records
+  acceptable_sections:
+  - Data Retention
+  - Appendix A
+  tags:
+  - medium
+  - retention
+  - table
+- id: sn-010
+  question: How long are the advertising cookies and the analytics cookies valid?
+  reference_answer: Advertising cookies last 90 days and analytics cookies last 13 months.
+  expected_sources: *id001
+  key_facts:
+  - Advertising cookies last 90 days
+  - Analytics cookies last 13 months
+  must_retrieve:
+  - Interest-based ads, conversion measurement
+  - Page performance, usage statistics
+  acceptable_sections:
+  - Cookies and Tracking Technologies
+  tags:
+  - medium
+  - cookies
+  - table
+  - near-duplicate
+- id: sn-011
+  question: What information does ShopNest share with a Marketplace seller, and does the seller get the buyer's email address?
+  reference_answer: ShopNest shares the buyer's name, shipping address and order contents. The email address and phone number are not shared unless needed to deliver oversized goods.
+  expected_sources: *id001
+  key_facts:
+  - Shares the buyer's name, shipping address and order contents
+  - Email address and phone number are not shared with sellers
+  - 'Exception: unless needed for delivery of oversized goods'
+  must_retrieve:
+  - name, shipping address, and order contents
+  - oversized goods
+  acceptable_sections:
+  - How We Share Information
+  - Marketplace Sellers
+  tags:
+  - medium
+  - marketplace
+  - exception
+- id: sn-012
+  question: What does ShopNest Kids collect, and how does it verify parental consent?
+  reference_answer: ShopNest Kids profiles are created and controlled by a parent or guardian and collect only first name, age band and wishlist items. Verifiable parental consent uses a 1 USD card authorization that is not charged.
+  expected_sources: *id001
+  key_facts:
+  - Kids profiles are created and controlled by a parent or guardian
+  - Collect only first name, age band and wishlist items
+  - Parental consent uses a 1 USD card authorization that is not charged
+  must_retrieve:
+  - first name, age band and wishlist items
+  - 1 USD card authorization
+  acceptable_sections:
+  - Children's Privacy
+  tags:
+  - medium
+  - children
+- id: sn-013
+  question: How much does ShopNest Prime cost?
+  reference_answer: 14.99 USD monthly or 139 USD yearly.
+  expected_sources: *id001
+  key_facts:
+  - 14.99 USD monthly
+  - 139 USD yearly
+  must_retrieve:
+  - 14.99 USD monthly or 139 USD yearly
+  acceptable_sections:
+  - Specific Programs
+  tags:
+  - medium
+  - prime
+- id: sn-014
+  question: How long does ShopNest have to respond to a deletion request from a California resident?
+  reference_answer: 45 days. The general deadline for deletion requests is 30 days, with 45 days in California.
+  expected_sources: *id001
+  key_facts:
+  - The response deadline for California residents is 45 days
+  - The general deadline for deletion requests is 30 days
+  must_retrieve:
+  - Erase data, subject to legal retention
+  acceptable_sections:
+  - Your Rights and Choices
+  tags:
+  - hard
+  - rights
+  - conditional
+- id: sn-015
+  question: A user has a ShopNest Pay balance of 600 USD and no two-step verification. Is that allowed, and how long are their identity records kept after they close the account?
+  reference_answer: It is not allowed, because two-step verification is mandatory for ShopNest Pay accounts holding a balance above 500 USD. Anti-money-laundering rules require identity records to be kept for 5 years after closure.
+  expected_sources: *id001
+  key_facts:
+  - Two-step verification is mandatory for ShopNest Pay balances above 500 USD, so 600 USD without it is not allowed
+  - Identity records are retained for 5 years after closure under anti-money-laundering rules
+  must_retrieve:
+  - 5 years after closure
+  - above 500 USD
+  acceptable_sections:
+  - Specific Programs
+  - Security
+  - Appendix A
+  tags:
+  - hard
+  - multi-hop
+  - near-duplicate
+  - payments
+- id: sn-016
+  question: A guest shopper's order is flagged as fraud. How long can it be held, and can they ask for a human to review it?
+  reference_answer: A flagged order can be held for up to 48 hours for manual review. The user may request human review of any automated decision that blocks an order or closes an account.
+  expected_sources: *id001
+  key_facts:
+  - A flagged order may be held for up to 48 hours for manual review
+  - The user may request human review of any automated decision that blocks an order or closes an account
+  must_retrieve:
+  - held for up to 48 hours
+  - human review of any automated decision
+  acceptable_sections:
+  - How We Use Information
+  - Appendix A
+  tags:
+  - hard
+  - multi-hop
+  - automated-decisions
+- id: sn-017
+  question: If a user opts out of human review of ShopNest Voice recordings, how long are the recordings still kept?
+  reference_answer: Opting out only stops human review, which is opt-in and covers up to 0.2 percent of recordings. Retention is unchanged at 18 months by default, or 3 months if the user changes the setting.
+  expected_sources: *id001
+  key_facts:
+  - Human review is opt-in and covers up to 0.2 percent of recordings
+  - Opting out does not change retention
+  - Retention is 18 months by default, or 3 months if the user changes the setting
+  must_retrieve:
+  - up to 0.2 percent of recordings
+  - Voice recordings (ShopNest Voice)
+  acceptable_sections:
+  - Specific Programs
+  - Data Retention
+  tags:
+  - hard
+  - multi-hop
+  - voice
+- id: sn-018
+  question: Roughly how many government data requests did ShopNest comply with in 2025?
+  reference_answer: About 912. ShopNest received 1,284 requests and complied in full or in part with 71 percent.
+  expected_sources: *id001
+  key_facts:
+  - ShopNest received 1,284 government data requests in 2025
+  - It complied in full or in part with 71 percent
+  - 71 percent of 1,284 is about 912
+  must_retrieve:
+  - 1,284 government data requests
+  - 71 percent
+  acceptable_sections:
+  - How We Share Information
+  - Appendix A
+  tags:
+  - hard
+  - calculation
+- id: sn-019
+  question: How quickly does a marketing email unsubscribe take effect?
+  reference_answer: The communications section says unsubscribes take effect within 10 business days. The rights table says withdrawing marketing consent is effective immediately. Both statements appear in the policy.
+  expected_sources: *id001
+  key_facts:
+  - 'Communications section: unsubscribes take effect within 10 business days'
+  - 'Rights table: withdrawing marketing consent is effective immediately'
+  - Both statements appear in the policy
+  must_retrieve:
+  - take effect within 10 business days
+  - Withdraw marketing or location consent anytime
+  acceptable_sections:
+  - Communications Preferences
+  - Your Rights and Choices
+  tags:
+  - hard
+  - contradiction
+  - communications
+- id: sn-020
+  question: Does ShopNest sell personal information?
+  reference_answer: It does not sell personal information for money, and does not sell data of consumers known to be under 16. It does share hashed identifiers and ad interaction data with advertising partners, which counts as sharing for cross-context behavioral advertising under California law. Users can opt out.
+  expected_sources: *id001
+  key_facts:
+  - Does not sell personal information for money, or data of consumers known to be under 16
+  - Shares hashed identifiers and ad interaction data with advertising partners
+  - This counts as sharing for cross-context behavioral advertising under California law
+  - Users can opt out
+  must_retrieve:
+  - We do not sell Personal Information for money
+  - We share hashed identifiers and ad interaction data
+  acceptable_sections:
+  - How We Share Information
+  - Regional Disclosures
+  tags:
+  - hard
+  - sharing
+  - nuance
+- id: sn-021
+  question: Which data types does ShopNest retain for 7 years?
+  reference_answer: Order history and invoices, order records for guest checkouts, and seller verification data (retained for 7 years after the seller account closes). Billing data for Prime is also retained for 7 years, and the last 4 card digits are kept with the order for 7 years.
+  expected_sources: *id001
+  key_facts:
+  - Order history and invoices
+  - Guest checkout order records
+  - Seller verification data, for 7 years after the seller account closes
+  - Prime billing data
+  - Last 4 card digits kept with the order
+  must_retrieve:
+  - Order history and invoices
+  - retained for 7 years after the seller account closes
+  - Billing data is retained 7 years
+  acceptable_sections:
+  - Data Retention
+  - Marketplace Sellers
+  - Specific Programs
+  tags:
+  - hard
+  - aggregation
+  - retention
+- id: sn-022
+  question: What happens to a government ID submitted to verify a rights request?
+  reference_answer: A government ID may be required for higher-risk requests and is deleted after verification, within 14 days.
+  expected_sources: *id001
+  key_facts:
+  - A government ID may be required for higher-risk requests
+  - It is deleted after verification, within 14 days
+  must_retrieve:
+  - government ID, deleted after verification within 14 days
+  acceptable_sections:
+  - Your Rights and Choices
+  tags:
+  - hard
+  - rights
+  - verification
+- id: sn-023
+  question: Does ShopNest collect social security numbers or health records?
+  reference_answer: No. ShopNest does not collect social security numbers, passport numbers or health records.
+  expected_sources: *id001
+  key_facts:
+  - Does not collect social security numbers
+  - Does not collect passport numbers or health records
+  must_retrieve:
+  - social security numbers, passport numbers, or health records
+  acceptable_sections:
+  - Information We Collect
+  tags:
+  - negative
+  - groundedness
+- id: sn-024
+  question: Does ShopNest share customer data with data brokers?
+  reference_answer: The policy does not mention data brokers, so this is not stated. It lists service providers, Marketplace sellers, advertising partners, corporate transactions and legal requests as recipients. A grounded answer should say the document does not cover it.
+  expected_sources: *id001
+  key_facts:
+  - The policy does not mention data brokers
+  - Says the document does not cover it, without claiming yes or no
+  - 'Optionally lists the stated recipients: service providers, Marketplace sellers, advertising partners, corporate transactions, legal requests'
+  must_retrieve: []
+  acceptable_sections:
+  - How We Share Information
+  tags:
+  - negative
+  - groundedness
+  - unanswerable
+- id: sn-025
+  question: What is the return window for items bought on ShopNest?
+  reference_answer: Not stated. The policy covers privacy only and does not give a return window. A grounded answer should say the document does not contain this.
+  expected_sources: []
+  key_facts:
+  - The document does not state a return window
+  - The policy covers privacy only
+  must_retrieve: []
+  acceptable_sections: []
+  tags:
+  - negative
+  - groundedness
+  - unanswerable
+- id: sn-026
+  question: Which transfer mechanism applies to the data of users in India?
+  reference_answer: Not stated. The policy says Indian users are subject to the Digital Personal Data Protection Act, 2023 and receive consent notices in English and 11 Indian languages, but it names no transfer mechanism for India. Standard Contractual Clauses and the EU-US Data Privacy Framework are stated only for EEA and UK transfers.
+  expected_sources: *id001
+  key_facts:
+  - Indian users are subject to the Digital Personal Data Protection Act, 2023
+  - Consent notices are in English and 11 Indian languages
+  - No transfer mechanism is named for India
+  - SCCs and the EU-US Data Privacy Framework are stated only for EEA and UK transfers
+  must_retrieve:
+  - Digital Personal Data Protection Act, 2023
+  acceptable_sections:
+  - International Transfers
+  tags:
+  - negative
+  - groundedness
+  - partial-answer

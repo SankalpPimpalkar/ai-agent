@@ -17,6 +17,9 @@ from app.schemas.chat import (
     DocumentDeleteResponse,
     DocumentIngestRequest,
     DocumentIngestResponse,
+    DocumentSearchRequest,
+    DocumentSearchResponse,
+    RetrievedChunkItem,
     UploadedDocumentItem,
 )
 
@@ -237,4 +240,94 @@ async def delete_document_route(
         status="success",
         doc_id=doc_id,
         message=f"Successfully deleted document '{doc_id}' and all its chunks from vector database.",
+    )
+
+
+async def search_chunks_helper(
+    query: str,
+    k: int,
+    vector_store: VectorStore,
+    settings: Settings,
+) -> DocumentSearchResponse:
+    if not settings.ENABLE_RAG:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="RAG feature is disabled. Set ENABLE_RAG=true to search chunks.",
+        )
+
+    q = query.strip()
+    if not q:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="Query parameter cannot be empty.",
+        )
+
+    # Perform similarity search with scores if available
+    try:
+        if hasattr(vector_store, "asimilarity_search_with_score"):
+            results = await vector_store.asimilarity_search_with_score(q, k=k)
+        elif hasattr(vector_store, "similarity_search_with_score"):
+            results = vector_store.similarity_search_with_score(q, k=k)
+        elif hasattr(vector_store, "asimilarity_search"):
+            docs = await vector_store.asimilarity_search(q, k=k)
+            results = [(d, None) for d in docs]
+        else:
+            docs = await vector_store.as_retriever(search_kwargs={"k": k}).ainvoke(q)
+            results = [(d, None) for d in docs]
+    except Exception:
+        docs = await vector_store.as_retriever(search_kwargs={"k": k}).ainvoke(q)
+        results = [(d, None) for d in docs]
+
+    chunk_items: List[RetrievedChunkItem] = []
+    for idx, item in enumerate(results):
+        if isinstance(item, tuple) and len(item) == 2:
+            doc, score = item
+        else:
+            doc, score = item, None
+
+        chunk_items.append(
+            RetrievedChunkItem(
+                chunk_index=idx + 1,
+                content=doc.page_content,
+                metadata=doc.metadata if hasattr(doc, "metadata") else {},
+                score=round(float(score), 4) if score is not None else None,
+            )
+        )
+
+    return DocumentSearchResponse(
+        query=q,
+        total_chunks=len(chunk_items),
+        chunks=chunk_items,
+    )
+
+
+@router.get("/documents/chunks", response_model=DocumentSearchResponse)
+async def get_document_chunks_route(
+    query: str = Query(..., min_length=1, description="Search query to retrieve matching chunks"),
+    k: int = Query(default=4, ge=1, le=50, description="Number of chunks to return"),
+    settings: Settings = Depends(get_settings),
+    vector_store: VectorStore = Depends(get_vector_store_dep),
+) -> DocumentSearchResponse:
+    """
+    Fetches the top-k most relevant document chunks matching the query from the vector database.
+    Allows manual inspection of chunk content, section headers, metadata, and similarity scores.
+    """
+    return await search_chunks_helper(
+        query=query, k=k, vector_store=vector_store, settings=settings
+    )
+
+
+@router.post("/documents/query", response_model=DocumentSearchResponse)
+@router.post("/documents/chunks", response_model=DocumentSearchResponse)
+async def query_document_chunks_route(
+    payload: DocumentSearchRequest,
+    settings: Settings = Depends(get_settings),
+    vector_store: VectorStore = Depends(get_vector_store_dep),
+) -> DocumentSearchResponse:
+    """
+    Fetches the top-k most relevant document chunks for the provided query via JSON POST.
+    Allows testing what chunks are returned for a specific prompt or question.
+    """
+    return await search_chunks_helper(
+        query=payload.query, k=payload.k, vector_store=vector_store, settings=settings
     )

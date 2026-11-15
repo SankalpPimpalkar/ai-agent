@@ -1,6 +1,6 @@
 from pathlib import Path
-from typing import Any, Dict, List, Optional
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import field_validator
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 DATA_DIR = BASE_DIR / "data"
@@ -25,7 +25,7 @@ class Settings(BaseSettings):
     OLLAMA_BASE_URL: str = "http://localhost:11434"
     MODEL: str = "gemma4:12b"
     TEMPERATURE: float = 0.7
-    SYSTEM_PROMPT: str = "You are a helpful and versatile AI assistant."
+    SYSTEM_PROMPT: str = "system-prompt.txt"
 
     # Database settings
     DATABASE_URL: str = f"sqlite+aiosqlite:///{DATA_DIR / 'app.db'}"
@@ -51,6 +51,15 @@ class Settings(BaseSettings):
 
     # MCP configuration file path (standard mcpServers JSON)
     MCP_CONFIG_PATH: str = "mcp_servers.json"
+
+
+    @field_validator("SYSTEM_PROMPT", mode="before")
+    @classmethod
+    def read_text_file(cls, val: str) -> str:
+        path = BASE_DIR / val
+        if path.is_file():
+            return path.read_text(encoding='utf-8')
+        return val
 
 
 settings = Settings()

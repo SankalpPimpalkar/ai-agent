@@ -4,7 +4,7 @@ UVICORN ?= $(if $(wildcard $(VENV)/bin/uvicorn),$(VENV)/bin/uvicorn,uvicorn)
 ALEMBIC ?= $(if $(wildcard $(VENV)/bin/alembic),$(VENV)/bin/alembic,alembic)
 PIP ?= $(if $(wildcard $(VENV)/bin/pip),$(VENV)/bin/pip,pip)
 
-.PHONY: help dev start test test-verbose migrate migration rollback db-reset db-clean install sync-packages clean
+.PHONY: help dev start test test-verbose eval migrate migration rollback db-reset db-clean install sync-packages clean
 
 help:
 	@echo "Available commands:"
@@ -12,11 +12,12 @@ help:
 	@echo "  make start         - Run production server on port 8000"
 	@echo "  make test          - Run unit test suite"
 	@echo "  make test-verbose  - Run unit test suite with verbose output"
+	@echo "  make eval          - Run RAG evaluation suite against isolated test database"
 	@echo "  make migrate       - Apply all pending database migrations"
 	@echo "  make migration     - Generate a new Alembic migration"
 	@echo "  make rollback      - Roll back the latest migration"
-	@echo "  make db-reset      - Clean app.db and recreate all tables and migrations from scratch"
-	@echo "  make db-clean      - Clean app.db and re-apply existing migrations and checkpointers"
+	@echo "  make db-reset      - Clean app.db, ChromaDB, and recreate all tables and migrations from scratch"
+	@echo "  make db-clean      - Clean app.db, ChromaDB, and re-apply existing migrations and checkpointers"
 	@echo "  make install       - Install dependencies from requirements.txt"
 	@echo "  make sync-packages - Freeze installed packages to requirements.txt"
 	@echo "  make clean         - Remove Python bytecode and cache files"
@@ -33,6 +34,9 @@ test:
 test-verbose:
 	$(PYTHON) -m unittest discover -v tests
 
+eval:
+	$(PYTHON) -m eval.runner
+
 migrate:
 	$(ALEMBIC) upgrade head
 
@@ -43,20 +47,22 @@ rollback:
 	$(ALEMBIC) downgrade -1
 
 db-reset:
-	@echo "Cleaning app.db and recreating all migrations and tables from scratch..."
+	@echo "Cleaning app.db, ChromaDB, and recreating all migrations and tables from scratch..."
 	rm -f data/app.db data/app.db-wal data/app.db-shm
+	rm -rf data/chroma data/eval
 	rm -rf migrations/versions/*.py migrations/versions/__pycache__
 	$(ALEMBIC) revision --autogenerate -m "initial_schema"
 	$(ALEMBIC) upgrade head
 	$(PYTHON) -c "import asyncio; from app.agent.memory import init_checkpointer; asyncio.run(init_checkpointer())"
-	@echo "Database and migrations successfully recreated!"
+	@echo "Database, ChromaDB, and migrations successfully recreated!"
 
 db-clean:
-	@echo "Cleaning app.db and re-applying existing migrations and checkpointers..."
+	@echo "Cleaning app.db, ChromaDB, and re-applying existing migrations and checkpointers..."
 	rm -f data/app.db data/app.db-wal data/app.db-shm
+	rm -rf data/chroma data/eval
 	$(ALEMBIC) upgrade head
 	$(PYTHON) -c "import asyncio; from app.agent.memory import init_checkpointer; asyncio.run(init_checkpointer())"
-	@echo "Database successfully cleaned and re-initialized!"
+	@echo "Database and ChromaDB successfully cleaned and re-initialized!"
 
 install:
 	$(PIP) install -r requirements.txt
