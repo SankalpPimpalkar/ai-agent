@@ -1,6 +1,6 @@
 # System Architecture & Code Flow
 
-This document details the architectural design, module responsibilities, and runtime execution flow for the AI Agent service.
+This document details the architectural design, module responsibilities, security boundaries, and runtime execution flow for the AI Agent service.
 
 ---
 
@@ -8,25 +8,32 @@ This document details the architectural design, module responsibilities, and run
 
 ```mermaid
 flowchart TD
-    subgraph ClientLayer["Client Layer"]
-        Client["HTTP Client / Browser / Frontend"]
+    subgraph ClientLayer["Client & Tooling Layer"]
+        Client["HTTP Client / Browser / Frontend UI"]
+        Bruno["Bruno API Collection (bruno/)"]
     end
 
     subgraph APILayer["FastAPI Application Layer (app/)"]
         Main["app/main.py\n(FastAPI Composition Root & Lifespan)"]
         ChatRoute["app/api/routes/chat.py\nPOST /chat\nPOST /chat/stream"]
-        ConvRoute["app/api/routes/conversations.py\nGET /conversations"]
-        DocRoute["app/api/routes/documents.py\nPOST /documents"]
+        SettingsRoute["app/api/routes/settings.py\nGET /settings\nPOST /settings"]
+        ConvRoute["app/api/routes/conversations.py\nGET /conversations\nGET /conversations/{id}\nDELETE /conversations/{id}"]
+        DocRoute["app/api/routes/documents.py\nPOST /documents\nGET /documents\nGET/POST /documents/chunks\nDELETE /documents/{id}"]
+        EvalRoute["app/api/routes/evals.py\nPOST/GET/DELETE /evals/documents\nGET/POST /evals/chunks\nPOST /evals/run\nGET /evals/results"]
         HealthRoute["GET /health"]
         Deps["app/api/deps.py\n(Dependency Injection)"]
     end
 
+    subgraph SecurityLayer["Security & Prompt Guardrails (app/agent/security.py)"]
+        SecValidator["validate_user_instructions()\n- Anti-Prompt Injection\n- Jailbreak & DAN Detection\n- System Prompt Override Blocks\n- Exfiltration & Destructive Blocks"]
+    end
+
     subgraph AgentLayer["Agent & LLM Engine (app/agent/)"]
-        Builder["app/agent/builder.py\n(AgentRunner & Tool Loop)"]
-        LLM["app/agent/llm.py\n(ChatOllama Provider)"]
-        Prompts["app/agent/prompts.py\n(System & Chat Templates)"]
+        Builder["app/agent/builder.py\n(AgentRunner, Message Builder & Tool Loop)"]
+        LLM["app/agent/llm.py\n(ChatOllama Provider: Thinking & Params)"]
         Memory["app/agent/memory.py\n(Checkpointer & Session State)"]
         Middleware["app/agent/middleware.py\n(Tool Pruning & Summarization)"]
+        SysPromptFile["system-prompt.txt\n(Immutable Abstract Baseline)"]
     end
 
     subgraph ToolLayer["Tool Ecosystem (app/tools/)"]
@@ -37,8 +44,8 @@ flowchart TD
     end
 
     subgraph RAGLayer["RAG Subsystem (app/rag/)"]
-        Ingest["app/rag/ingest.py\n(Chunking & Indexing)"]
-        Store["app/rag/store.py\n(VectorStore: InMemory/Chroma)"]
+        Ingest["app/rag/ingest.py\n(Section & Table Chunking)"]
+        Store["app/rag/store.py\n(VectorStore: ChromaDB)"]
         Embeddings["app/rag/embeddings.py\n(OllamaEmbeddings)"]
     end
 
@@ -55,26 +62,29 @@ flowchart TD
     end
 
     %% Client Connections
-    Client -->|POST /chat| Main
-    Client -->|POST /chat/stream| Main
-    Client -->|POST /documents| Main
-    Client -->|GET /health| Main
+    Client -->|API Requests| Main
+    Bruno -->|Collections| Main
 
     %% Route Distribution
     Main --> ChatRoute
+    Main --> SettingsRoute
+    Main --> ConvRoute
     Main --> DocRoute
+    Main --> EvalRoute
     Main --> HealthRoute
 
-    %% Dependencies
+    %% Route Security & Dependencies
+    SettingsRoute --> SecValidator
     ChatRoute --> Deps
     DocRoute --> Deps
+    SettingsRoute --> Deps
     Deps --> Builder
     Deps --> Store
     Deps --> DB
 
-    %% Agent Construction
+    %% Agent Construction & Hierarchy
+    Builder --> SysPromptFile
     Builder --> LLM
-    Builder --> Prompts
     Builder --> Registry
     LLM --> OllamaLLM
 
@@ -103,9 +113,35 @@ flowchart TD
 
 ## 2. End-to-End Code Flow
 
-### 2.1 Chat Request Flow (with Memory & Tool Calling)
+### 2.1 Settings Configuration & Security Validation Flow
 
-The sequence diagram below illustrates what happens from the moment a client sends a message to `/chat` until the model responds (including session checkpointer, middlewares, and automatic tool invocation):
+The `/settings` route provides dynamic runtime configuration for UI layers and clients while enforcing strict security boundaries over the abstract system prompt and user instructions:
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Client as UI / Client / Admin
+    participant Route as app/api/routes/settings.py
+    participant Sec as app/agent/security.py
+    participant Config as app/config.py (Settings)
+
+    Client->>Route: POST /settings {"instructions": "...", "temperature": 0.2, "thinking": false}
+    
+    alt Instructions contain injection or system override
+        Route->>Sec: validate_user_instructions(instructions)
+        Sec-->>Route: Raise HTTPException(422) (Prompt Injection / Override detected)
+        Route-->>Client: 422 Unprocessable Content {"detail": "Instruction rejected: Potential prompt injection..."}
+    else Valid instructions
+        Route->>Sec: validate_user_instructions(instructions)
+        Sec-->>Route: Cleaned instructions
+        Route->>Config: Update USER_INSTRUCTIONS, TEMPERATURE, MAX_ITERATIONS, ENABLE_REASONING
+        Route-->>Client: 200 OK SettingsResponse (without exposing system_prompt)
+    end
+```
+
+### 2.2 Chat Request Flow (with Instructions Hierarchy & Thinking Mode)
+
+The sequence diagram below illustrates what happens from the moment a client sends a message to `/chat` or `/chat/stream` until the model responds (including prompt assembly, session checkpointer, middlewares, and automatic tool invocation):
 
 ```mermaid
 sequenceDiagram
@@ -121,7 +157,7 @@ sequenceDiagram
     participant LLM as app/agent/llm.py (ChatOllama)
     participant ExtMCP as Git / External MCP Server
 
-    Client->>Router: POST /chat {"message": "...", "session_id": "optional-uuid"}
+    Client->>Router: POST /chat {"message": "...", "thinking": false, "session_id": "optional-uuid"}
     Router->>Router: Resolve session_id (reuse or generate UUID)
     Router->>Deps: get_agent()
     Deps->>Runner: build_agent()
@@ -137,7 +173,8 @@ sequenceDiagram
     Registry-->>Runner: Return all active tools
     Runner->>LLM: bind_tools(tools)
   
-    Router->>Runner: execute(message, session_id)
+    Router->>Runner: execute(message, session_id, temperature, max_iterations, thinking)
+    Runner->>Runner: build_messages(): System prompt + Subordinate User Instructions
     Runner->>Memory: load_session_history(session_id)
     Memory-->>Runner: Prior conversation messages
     Runner->>Middlewares: prune_old_tool_outputs_middleware(messages)
@@ -145,7 +182,7 @@ sequenceDiagram
     Runner->>Middlewares: summarize_context_middleware(messages)
     Middlewares-->>Runner: Compressed messages (if context overflowed)
 
-    Runner->>LLM: ainvoke(messages)
+    Runner->>LLM: ainvoke(messages) with reasoning/thinking flag
   
     alt LLM returns Tool Calls
         LLM-->>Runner: AIMessage(tool_calls=[git_status()])
@@ -204,14 +241,16 @@ sequenceDiagram
 
 | File                           | Purpose                                                                                                 |
 | :----------------------------- | :------------------------------------------------------------------------------------------------------ |
-| **`mcp_servers.json`** | Standard multi-platform MCP configuration. Holds server commands, arguments, and environment variables. |
-| **`pyproject.toml`**   | Standard PEP 621 packaging and dependency metadata.                                                     |
-| **`requirements.txt`** | Pinned dependencies for virtual environment reproducibility.                                            |
-| **`Makefile`**         | CLI workflows: `make dev`, `make start`, `make test`, `make migrate`.                           |
-| **`alembic.ini`**      | Alembic CLI configuration pointing to `migrations/` and database URL.                                 |
-| **`.env.sample`**      | Sample environment variables for developer configuration.                                               |
-| **`ARCHITECTURE.md`**  | System architecture diagrams and technical specifications.                                              |
-| **`README.md`**        | Overview, setup guide, and endpoint documentation.                                                      |
+| **`system-prompt.txt`**        | Abstract, immutable system prompt defining agent identity, tool capabilities, and security boundaries.   |
+| **`bruno/`**                   | Declarative OpenCollection API suite for testing and inspecting endpoints across all modules in Bruno.  |
+| **`mcp_servers.json`**         | Standard multi-platform MCP configuration. Holds server commands, arguments, and environment variables. |
+| **`pyproject.toml`**           | Standard PEP 621 packaging and dependency metadata.                                                     |
+| **`requirements.txt`**         | Pinned dependencies for virtual environment reproducibility.                                            |
+| **`Makefile`**                 | CLI workflows: `make dev`, `make start`, `make test`, `make migrate`.                                   |
+| **`alembic.ini`**              | Alembic CLI configuration pointing to `migrations/` and database URL.                                   |
+| **`.env.sample`**              | Sample environment variables for developer configuration.                                               |
+| **`ARCHITECTURE.md`**          | System architecture diagrams and technical specifications.                                              |
+| **`README.md`**                | Overview, setup guide, and endpoint documentation.                                                      |
 
 ---
 
@@ -220,33 +259,37 @@ sequenceDiagram
 #### Core Configuration & Application Lifespan
 
 - **`app/main.py`**:
-  Application factory (`build_app()`). Wires FastAPI, manages asynchronous startup/shutdown lifespan (`init_db`), mounts `/health`, `/chat`, `/chat/stream`, and `/documents`.
+  Application factory (`build_app()`). Wires FastAPI, manages asynchronous startup/shutdown lifespan (`init_db`, `init_checkpointer`), mounts `/health`, `/chat`, `/chat/stream`, `/conversations`, `/documents`, `/evals`, and `/settings`.
 - **`app/config.py`**:
-  Typed application configuration powered by Pydantic's `BaseSettings`. Reads environment variables and flags (`ENABLE_RAG`, `ENABLE_TOOLS`, `ENABLE_MCP`, `MCP_CONFIG_PATH`).
+  Typed application configuration powered by Pydantic's `BaseSettings`. Reads environment variables and flags (`ENABLE_RAG`, `ENABLE_TOOLS`, `ENABLE_MCP`, `MCP_CONFIG_PATH`, `MODEL`, `TEMPERATURE`, `MAX_ITERATIONS`, `USER_INSTRUCTIONS`).
 - **`app/db.py`**:
   SQLModel database session provider. Sets up the async SQLAlchemy engine, handles SQLite/PostgreSQL connections, and exposes the `get_session()` dependency with `expire_on_commit=False`.
 
 #### API Presentation Layer (`app/api/`)
 
 - **`app/api/deps.py`**:
-  FastAPI dependency injection providers: yields database sessions (`get_db_session`), assembles the agent runner (`get_agent`), and retrieves the vector store (`get_vector_store_dep`).
+  FastAPI dependency injection providers: yields database sessions (`get_db_session`), assembles the agent runner (`get_agent`), retrieves application settings (`get_settings`), and retrieves the vector store (`get_vector_store_dep`).
 - **`app/api/routes/chat.py`**:
-  Single centralized chat route. Handles both synchronous JSON replies (`POST /chat`) and Server-Sent Events token streaming (`POST /chat/stream`).
+  Centralized chat routes. Handles both synchronous JSON replies (`POST /chat`) and Server-Sent Events token streaming (`POST /chat/stream`), accepting per-request runtime overrides (`temperature`, `max_iterations`, `thinking`, `stream_tools`).
+- **`app/api/routes/settings.py`**:
+  Settings and instruction management (`GET /settings`, `POST /settings`). Allows dynamic runtime updates for `instructions`, `temperature`, `max_iterations`, and `thinking` mode. Enforces that the baseline system prompt is immutable over the API and never exposed in API responses.
 - **`app/api/routes/conversations.py`**:
   Conversation history routes (`GET /conversations`, `GET /conversations/{session_id}`, `DELETE /conversations/{session_id}`) listing active sessions with their auto-updated topic summary and last message timestamp.
 - **`app/api/routes/documents.py`**:
-  RAG document management routes (`POST /documents`, `GET /documents`, `DELETE /documents/{doc_id}`). Supports both raw text payloads (`application/json`) and file uploads (`multipart/form-data`) in a single route, assigns/accepts a unique `doc_id`, lists indexed documents, and allows clean deletion from ChromaDB and the database registry.
+  RAG document management routes (`POST /documents`, `GET /documents`, `GET /documents/chunks`, `POST /documents/query`, `DELETE /documents/{doc_id}`). Supports both raw text payloads and file uploads in a single route, chunk debugging/manual retrieval inspection, lists indexed documents, and allows clean deletion from ChromaDB and the database registry.
 - **`app/api/routes/evals.py`**:
-  Dedicated evaluation REST API (`/evals`) for dashboard panels: document ingestion (`POST /evals/documents`), document listing (`GET /evals/documents`), deletion (`DELETE /evals/documents/{doc_id}`), benchmark execution (`POST /evals/run`), and latest results retrieval (`GET /evals/results`) operating strictly on isolated evaluation databases.
+  Dedicated evaluation REST API (`/evals`) for dashboard panels: document ingestion (`POST /evals/documents`), document listing (`GET /evals/documents`), chunk retrieval inspection (`GET /evals/chunks`, `POST /evals/query`), deletion (`DELETE /evals/documents/{doc_id}`), benchmark execution (`POST /evals/run`), and latest results retrieval (`GET /evals/results`) operating strictly on isolated evaluation databases.
 
 #### Agent & Model Orchestration (`app/agent/`)
 
+- **`app/agent/security.py`**:
+  Instruction sanitization and prompt injection guardrail (`validate_user_instructions`). Evaluates custom user instructions against jailbreak attempts (`DAN mode`, `developer mode`), safety filter bypasses, credential/secret exfiltration (`cat .env`, prompt leaks), and system prompt override directives before applying them to the runtime.
 - **`app/agent/llm.py`**:
-  Instantiates the LangChain chat model (`ChatOllama`) configured with model name, base URL, and temperature.
+  Instantiates the LangChain chat model (`ChatOllama`) configured with model name, base URL, temperature, and thinking/reasoning flags.
 - **`app/agent/builder.py`**:
-  `AgentRunner` class. Builds prompt sequences (`SystemMessage` + `HumanMessage`), binds tools, and executes the multi-turn tool calling loop for both synchronous turns (`execute()`) and token streaming (`execute_stream()`) with optional tool status notices.
+  `AgentRunner` class. Builds prompt sequences (`SystemMessage` + `HumanMessage`), binds tools, combines abstract system prompt with subordinate user instructions, and executes the multi-turn tool calling loop for both synchronous turns (`execute()`) and token streaming (`execute_stream()`) with optional tool status notices.
 - **`app/agent/prompts.py`**:
-  Default system prompts and `ChatPromptTemplate` structures.
+  Default system prompt templates and chat message schemas.
 - **`app/agent/memory.py`**:
   Persistent conversation memory backed by LangGraph checkpointers (`AsyncSqliteSaver`) storing multi-turn history indexed by `session_id` in SQLite.
 - **`app/agent/middleware.py`**:
@@ -270,7 +313,7 @@ sequenceDiagram
 - **`app/rag/store.py`**:
   Persistent vector store provider backed by **ChromaDB** (`langchain-chroma`). Automatically persists embeddings to disk under `data/chroma/`, with dependency injection support for test overrides.
 - **`app/rag/ingest.py`**:
-  Document text extraction (`extract_text_from_file` supporting text/markdown, PDF via `pymupdf4llm` with table and Markdown layout extraction, `pdfplumber` structured table fallback, `pypdf`, and Word `.docx` with XML heading styles), section-aware text chunking (`chunk_text_by_sections` prepending heading breadcrumb paths and repeating Markdown table headers on split tables), vector store indexing with section metadata (`ingest_document`), and clean deletion (`delete_document_from_store`).
+  Document text extraction (`extract_text_from_file` supporting text/markdown, PDF via `pymupdf4llm` with table and Markdown layout extraction, `pdfplumber` structured table fallback, `pypdf`, and Word `.docx` with XML heading styles), section-aware text chunking (`chunk_text_by_sections` using subsection regex boundaries `split_subsections`, prepending heading breadcrumbs, and preserving Markdown table headers across chunk splits), vector store indexing with section metadata (`ingest_document`), and clean deletion (`delete_document_from_store`).
 - **`app/rag/embeddings.py`**:
   Embeddings provider wrapping LangChain's `OllamaEmbeddings`.
 
@@ -282,6 +325,8 @@ sequenceDiagram
   SQLModel table definition (`UploadedDocument`) tracking `doc_id`, `filename`, `source`, `chunks_count`, and `created_at`.
 - **`app/schemas/chat.py`**:
   Pydantic models for chat requests (`ChatRequest`), responses (`ChatResponse`), document ingestion (`DocumentIngestRequest`, `DocumentIngestResponse`), document deletion (`DocumentDeleteResponse`, `UploadedDocumentItem`), conversation listings (`ConversationSessionItem`, `ConversationDetailResponse`), and health status.
+- **`app/schemas/settings.py`**:
+  Pydantic models for runtime settings updates (`SettingsUpdateRequest`) and configuration inspection (`SettingsResponse`).
 - **`app/schemas/mcp.py`**:
   Strict schema models (`MCPServerConfig`, `MCPConfigFile`) validating `stdio` and `sse` MCP configurations, performing environment variable expansions, and enforcing platform standards.
 - **`app/schemas/evals.py`**:
@@ -312,9 +357,13 @@ sequenceDiagram
    Uses the official **Model Context Protocol (MCP)** specification via `langchain-mcp-adapters` instead of building custom tool execution engines from scratch.
 2. **Declarative Configuration**:
    MCP servers are added declaratively via `mcp_servers.json` without modifying Python code.
-3. **Pluggable Feature Flags**:
+3. **Layered Instruction Hierarchy & Security Invariants**:
+   The baseline system prompt is immutable over the API and loaded strictly from `system-prompt.txt`. User instructions can customize behavior and task execution, but are strictly subordinate to the system prompt and cannot override security rules or core capabilities.
+4. **Active Prompt Injection Guardrails**:
+   All user-provided instructions undergo strict regex and pattern verification (`app/agent/security.py`) to block prompt injections, jailbreaks, and data exfiltration attempts before execution.
+5. **Pluggable Feature Flags**:
    Tools, RAG, and MCP can each be toggled on or off independently via boolean flags (`ENABLE_TOOLS`, `ENABLE_RAG`, `ENABLE_MCP`).
-4. **Thin Web Layer**:
+6. **Thin Web Layer**:
    FastAPI routes contain zero business logic; they validate DTO schemas, resolve dependencies, and delegate execution to `AgentRunner` or `ingest_document`.
-5. **Robust Database Migrations**:
+7. **Robust Database Migrations**:
    Schema evolution is managed through Alembic async migrations (`alembic upgrade head`) referencing `SQLModel.metadata`.
