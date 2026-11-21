@@ -10,7 +10,7 @@ http:
     type: json
     data: |-
       {
-        "message": "What is in your knowledge base?",
+        "message": "Do you have scheduler related tools?",
         "stream_tools": true,
         "thinking": false
       }
