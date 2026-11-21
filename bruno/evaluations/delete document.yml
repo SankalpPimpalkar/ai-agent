@@ -1,0 +1,20 @@
+info:
+  name: delete document
+  type: http
+  seq: 5
+
+http:
+  method: DELETE
+  url: http://127.0.0.1:8000/evals/documents/:doc_id
+  params:
+    - name: doc_id
+      value: api-eval-doc-1
+      type: path
+  auth: inherit
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
+  forwardAuthorizationHeader: false

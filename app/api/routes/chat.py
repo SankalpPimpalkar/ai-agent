@@ -14,16 +14,15 @@ async def _chat_stream_generator(
     agent: AgentRunner,
     request: ChatRequest,
     session_id: str,
-    model: str,
-    system_prompt: str,
 ) -> AsyncGenerator[str, None]:
     try:
         async for chunk in agent.execute_stream(
             message=request.message,
             session_id=session_id,
-            system_prompt=system_prompt,
-            model=model,
+            temperature=request.temperature,
+            max_iterations=request.max_iterations,
             stream_tools=request.stream_tools,
+            thinking=request.thinking,
         ):
             yield chunk
     except Exception as e:
@@ -48,19 +47,18 @@ async def chat(
         if request.session_id and request.session_id.strip()
         else str(uuid.uuid4())
     )
-    model = request.model or settings.MODEL
-    system_prompt = request.system_prompt or settings.SYSTEM_PROMPT
 
     response_text = await agent.execute(
         message=request.message,
         session_id=session_id,
-        system_prompt=system_prompt,
-        model=model,
+        temperature=request.temperature,
+        max_iterations=request.max_iterations,
+        thinking=request.thinking,
     )
 
     return ChatResponse(
         response=response_text,
-        model=model,
+        model=settings.MODEL,
         session_id=session_id,
     )
 
@@ -83,16 +81,12 @@ async def chat_stream(
         if request.session_id and request.session_id.strip()
         else str(uuid.uuid4())
     )
-    model = request.model or settings.MODEL
-    system_prompt = request.system_prompt or settings.SYSTEM_PROMPT
 
     return StreamingResponse(
         _chat_stream_generator(
             agent=agent,
             request=request,
             session_id=session_id,
-            model=model,
-            system_prompt=system_prompt,
         ),
         media_type="text/event-stream",
         headers={"X-Session-ID": session_id},

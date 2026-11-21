@@ -1,0 +1,25 @@
+info:
+  name: update settings
+  type: http
+  seq: 2
+
+http:
+  method: POST
+  url: http://127.0.0.1:8000/settings
+  body:
+    type: json
+    data: |-
+      {
+        "instructions": "",
+        "temperature": 0.2,
+        "max_iterations": 10,
+        "thinking": true
+      }
+  auth: inherit
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
+  forwardAuthorizationHeader: false

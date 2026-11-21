@@ -5,10 +5,11 @@ from pydantic import BaseModel, Field
 
 class ChatRequest(BaseModel):
     message: str = Field(..., min_length=1, description="User prompt or chat message")
-    model: Optional[str] = Field(default=None, description="Optional LLM model override")
-    system_prompt: Optional[str] = Field(default=None, description="Optional system prompt override")
+    temperature: Optional[float] = Field(default=None, ge=0.0, le=2.0, description="Optional sampling temperature override (0.0 to 2.0)")
+    max_iterations: Optional[int] = Field(default=None, ge=1, le=50, description="Optional maximum tool execution loop iterations override")
     session_id: Optional[str] = Field(default=None, description="Optional session or conversation ID")
     stream_tools: bool = Field(default=False, description="Whether to stream tool execution notices in streaming mode")
+    thinking: Optional[bool] = Field(default=None, description="Whether to enable thinking / reasoning mode (controls thinking parameter for Ollama)")
 
 
 class ChatResponse(BaseModel):
@@ -55,6 +56,7 @@ class HealthResponse(BaseModel):
 class ConversationSessionItem(BaseModel):
     session_id: str
     summary: str
+    instructions: Optional[str] = None
     last_message_at: datetime
     created_at: datetime
     message_count: int

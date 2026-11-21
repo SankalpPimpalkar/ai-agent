@@ -1,4 +1,5 @@
 from pathlib import Path
+from typing import Optional
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import field_validator
 
@@ -26,6 +27,9 @@ class Settings(BaseSettings):
     MODEL: str = "gemma4:12b"
     TEMPERATURE: float = 0.7
     SYSTEM_PROMPT: str = "system-prompt.txt"
+    USER_INSTRUCTIONS: Optional[str] = None
+    ENABLE_REASONING: bool = False
+    MAX_ITERATIONS: int = 10
 
     # Database settings
     DATABASE_URL: str = f"sqlite+aiosqlite:///{DATA_DIR / 'app.db'}"

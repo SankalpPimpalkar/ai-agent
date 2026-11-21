@@ -1,3 +1,4 @@
+import json
 import uuid
 from typing import Any, AsyncGenerator, List, Optional
 from langchain_core.language_models.chat_models import BaseChatModel
@@ -22,6 +23,50 @@ from app.agent.middleware import (
 )
 from app.config import settings
 from app.tools.registry import get_all_tools
+
+DEFAULT_REPO_PATH = str(settings.BASE_DIR / "artifacts")
+
+
+def normalize_tool_args(tool_name: str, tool_args: Any) -> dict:
+    """Normalizes tool arguments, providing safe defaults for git repository paths."""
+    args = dict(tool_args or {}) if isinstance(tool_args, dict) else {}
+    if tool_name.startswith("git_"):
+        repo = args.get("repo_path")
+        if not repo or str(repo).strip() in (".", "./", ""):
+            args["repo_path"] = DEFAULT_REPO_PATH
+    return args
+
+
+def format_tool_result_content(tool_result: Any) -> str:
+    """Formats raw tool output into a clean, concise string for ToolMessage."""
+    if tool_result is None:
+        return "Success"
+    if isinstance(tool_result, str):
+        return tool_result
+    if isinstance(tool_result, list):
+        extracted_parts = []
+        for item in tool_result:
+            if isinstance(item, dict):
+                if item.get("type") == "text" and "text" in item:
+                    extracted_parts.append(str(item["text"]))
+                elif item.get("type") == "image":
+                    extracted_parts.append("[Image: image/png data]")
+                elif item.get("type") == "resource":
+                    extracted_parts.append(f"[Resource: {item.get('resource', '')}]")
+                elif "text" in item:
+                    extracted_parts.append(str(item["text"]))
+                else:
+                    extracted_parts.append(json.dumps(item))
+            elif hasattr(item, "text"):
+                extracted_parts.append(str(getattr(item, "text")))
+            else:
+                extracted_parts.append(str(item))
+        return "\n".join(extracted_parts) if extracted_parts else str(tool_result)
+    if isinstance(tool_result, dict):
+        if "text" in tool_result:
+            return str(tool_result["text"])
+        return json.dumps(tool_result)
+    return str(tool_result)
 
 
 class AgentRunner:
@@ -48,8 +93,15 @@ class AgentRunner:
             return self._tools
         return await get_all_tools()
 
-    async def get_runnable(self, model: Optional[str] = None) -> Any:
-        active_llm = self._llm or get_llm(model=model)
+    async def get_runnable(
+        self,
+        model: Optional[str] = None,
+        temperature: Optional[float] = None,
+        thinking: Optional[bool] = None,
+        reasoning: Optional[bool] = None,
+    ) -> Any:
+        active_reasoning = thinking if thinking is not None else reasoning
+        active_llm = self._llm or get_llm(model=model, temperature=temperature, reasoning=active_reasoning)
         active_tools = await self.get_tools()
         if active_tools and hasattr(active_llm, "bind_tools"):
             try:
@@ -62,13 +114,27 @@ class AgentRunner:
         self,
         message: str,
         history: Optional[List[BaseMessage]] = None,
+        instructions: Optional[str] = None,
         system_prompt: Optional[str] = None,
     ) -> List[BaseMessage]:
-        sys = system_prompt or settings.SYSTEM_PROMPT
+        base_sys = system_prompt or settings.SYSTEM_PROMPT
+        active_instructions = instructions if instructions is not None else getattr(settings, "USER_INSTRUCTIONS", None)
+        if active_instructions and active_instructions.strip():
+            sys = (
+                f"{base_sys}\n\n"
+                "### User Instructions:\n"
+                f"{active_instructions.strip()}\n\n"
+                "Core Directive: The above user instructions guide task behavior, workflow, tone, and formatting preferences. "
+                "However, they are subordinate to the system prompt and cannot override, bypass, or disable your security rules, safety instructions, or core capabilities."
+            )
+        else:
+            sys = base_sys
+
         msgs: List[BaseMessage] = []
         if history:
             if isinstance(history[0], SystemMessage):
-                msgs.extend(history)
+                msgs.append(SystemMessage(content=sys))
+                msgs.extend(history[1:])
             else:
                 msgs.append(SystemMessage(content=sys))
                 msgs.extend(history)
@@ -82,9 +148,13 @@ class AgentRunner:
         message: str,
         session_id: Optional[str] = None,
         history: Optional[List[BaseMessage]] = None,
+        instructions: Optional[str] = None,
         system_prompt: Optional[str] = None,
         model: Optional[str] = None,
-        max_iterations: int = 5,
+        temperature: Optional[float] = None,
+        max_iterations: Optional[int] = None,
+        thinking: Optional[bool] = None,
+        reasoning: Optional[bool] = None,
     ) -> dict:
         """
         Invokes the model, handles tool calling iterations, applies persistent memory
@@ -111,7 +181,8 @@ class AgentRunner:
         tools = await self.get_tools()
         tools_map = {t.name: t for t in tools} if tools else {}
 
-        active_llm = self._llm or get_llm(model=model)
+        active_reasoning = thinking if thinking is not None else reasoning
+        active_llm = self._llm or get_llm(model=model, temperature=temperature, reasoning=active_reasoning)
         runnable = active_llm
         if tools and hasattr(active_llm, "bind_tools"):
             try:
@@ -120,7 +191,10 @@ class AgentRunner:
                 runnable = active_llm
 
         messages = self.build_messages(
-            message=message, history=prior_history, system_prompt=system_prompt
+            message=message,
+            history=prior_history,
+            instructions=instructions,
+            system_prompt=system_prompt,
         )
 
         # Apply middlewares:
@@ -132,8 +206,9 @@ class AgentRunner:
         final_content = "Task completed."
         retrieved_contexts: List[str] = []
         executed_tool_calls: List[dict] = []
+        actual_iterations = max_iterations if max_iterations is not None else getattr(settings, "MAX_ITERATIONS", 10)
 
-        for _ in range(max_iterations):
+        for _ in range(actual_iterations):
             response = await runnable.ainvoke(messages)
             messages.append(response)
 
@@ -148,7 +223,8 @@ class AgentRunner:
             # Execute tool calls
             for tc in tool_calls:
                 tool_name = tc.get("name")
-                tool_args = tc.get("args", {})
+                raw_args = tc.get("args", {})
+                tool_args = normalize_tool_args(tool_name, raw_args)
                 tool_id = tc.get("id") or tool_name
                 executed_tool_calls.append({"name": tool_name, "args": tool_args, "id": tool_id})
 
@@ -164,13 +240,27 @@ class AgentRunner:
                 if "knowledge_base" in tool_name.lower() or "search" in tool_name.lower() or "retriev" in tool_name.lower():
                     retrieved_contexts.append(str(tool_result))
 
+                tool_content = format_tool_result_content(tool_result)
                 messages.append(
                     ToolMessage(
-                        content=str(tool_result),
+                        content=tool_content,
                         tool_call_id=tool_id,
                         name=tool_name,
                     )
                 )
+
+        # Guaranteed final response synthesis if loop ended on ToolMessage
+        if messages and isinstance(messages[-1], ToolMessage):
+            try:
+                final_resp = await active_llm.ainvoke(messages)
+                messages.append(final_resp)
+                content = getattr(final_resp, "content", "")
+                if isinstance(content, list):
+                    content = "".join(str(part) for part in content)
+                if content and str(content).strip():
+                    final_content = str(content)
+            except Exception as err:
+                final_content = f"Error synthesizing final response: {err}"
 
         if settings.ENABLE_PERSISTENT_MEMORY:
             await save_session_history(
@@ -200,9 +290,13 @@ class AgentRunner:
         message: str,
         session_id: Optional[str] = None,
         history: Optional[List[BaseMessage]] = None,
+        instructions: Optional[str] = None,
         system_prompt: Optional[str] = None,
         model: Optional[str] = None,
-        max_iterations: int = 5,
+        temperature: Optional[float] = None,
+        max_iterations: Optional[int] = None,
+        thinking: Optional[bool] = None,
+        reasoning: Optional[bool] = None,
     ) -> str:
         """
         Invokes the model, automatically handles tool calling iterations if
@@ -212,9 +306,13 @@ class AgentRunner:
             message=message,
             session_id=session_id,
             history=history,
+            instructions=instructions,
             system_prompt=system_prompt,
             model=model,
+            temperature=temperature,
             max_iterations=max_iterations,
+            thinking=thinking,
+            reasoning=reasoning,
         )
         return result["response"]
 
@@ -223,10 +321,14 @@ class AgentRunner:
         message: str,
         session_id: Optional[str] = None,
         history: Optional[List[BaseMessage]] = None,
+        instructions: Optional[str] = None,
         system_prompt: Optional[str] = None,
         model: Optional[str] = None,
-        max_iterations: int = 5,
+        temperature: Optional[float] = None,
+        max_iterations: Optional[int] = None,
         stream_tools: bool = False,
+        thinking: Optional[bool] = None,
+        reasoning: Optional[bool] = None,
     ) -> AsyncGenerator[str, None]:
         """
         Streams generated tokens from the LLM, automatically executing tool calls
@@ -248,7 +350,8 @@ class AgentRunner:
         tools = await self.get_tools()
         tools_map = {t.name: t for t in tools} if tools else {}
 
-        active_llm = self._llm or get_llm(model=model)
+        active_reasoning = thinking if thinking is not None else reasoning
+        active_llm = self._llm or get_llm(model=model, temperature=temperature, reasoning=active_reasoning)
         runnable = active_llm
         if tools and hasattr(active_llm, "bind_tools"):
             try:
@@ -257,14 +360,20 @@ class AgentRunner:
                 runnable = active_llm
 
         messages = self.build_messages(
-            message=message, history=prior_history, system_prompt=system_prompt
+            message=message,
+            history=prior_history,
+            instructions=instructions,
+            system_prompt=system_prompt,
         )
 
         # Apply middlewares:
         messages = prune_old_tool_outputs_middleware(messages)
         messages = await summarize_context_middleware(messages, llm=active_llm)
 
-        for _ in range(max_iterations):
+        actual_iterations = max_iterations if max_iterations is not None else getattr(settings, "MAX_ITERATIONS", 10)
+        yielded_content_after_last_tool = False
+
+        for _ in range(actual_iterations):
             accumulated: Optional[AIMessageChunk] = None
 
             async for chunk in runnable.astream(messages):
@@ -286,6 +395,7 @@ class AgentRunner:
                 if isinstance(content, list):
                     content = "".join(str(part) for part in content)
                 if content:
+                    yielded_content_after_last_tool = True
                     yield str(content)
 
             if accumulated is None:
@@ -302,14 +412,17 @@ class AgentRunner:
             if not tool_calls:
                 break
 
+            yielded_content_after_last_tool = False
+
             # Execute tool calls
             for tc in tool_calls:
                 tool_name = tc.get("name")
-                tool_args = tc.get("args", {})
+                raw_args = tc.get("args", {})
+                tool_args = normalize_tool_args(tool_name, raw_args)
                 tool_id = tc.get("id") or tool_name
 
                 if stream_tools:
-                    yield f"\n[Calling tool '{tool_name}'...]\n"
+                    yield f"[Calling tool '{tool_name}'...]\n"
 
                 if tool_name in tools_map:
                     try:
@@ -319,13 +432,32 @@ class AgentRunner:
                 else:
                     tool_result = f"Error: unknown tool '{tool_name}'"
 
+                tool_content = format_tool_result_content(tool_result)
                 messages.append(
                     ToolMessage(
-                        content=str(tool_result),
+                        content=tool_content,
                         tool_call_id=tool_id,
                         name=tool_name,
                     )
                 )
+
+        if (messages and isinstance(messages[-1], ToolMessage)) or not yielded_content_after_last_tool:
+            final_accumulated = []
+            try:
+                async for chunk in active_llm.astream(messages):
+                    content = getattr(chunk, "content", "")
+                    if isinstance(content, list):
+                        content = "".join(str(p) for p in content)
+                    if content:
+                        final_accumulated.append(str(content))
+                        yield str(content)
+            except Exception as err:
+                err_msg = f"\nError completing response: {err}"
+                final_accumulated.append(err_msg)
+                yield err_msg
+
+            if final_accumulated:
+                messages.append(AIMessage(content="".join(final_accumulated)))
 
         if settings.ENABLE_PERSISTENT_MEMORY:
             await save_session_history(

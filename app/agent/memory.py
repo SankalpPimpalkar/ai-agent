@@ -22,6 +22,25 @@ from app.models.conversation import ConversationSession
 from app.schemas.chat import MessageItem
 
 _CUSTOM_CHECKPOINTER: Optional[BaseCheckpointSaver] = None
+_SESSION_INSTRUCTIONS: Dict[str, str] = {}
+
+
+def get_session_instructions(session_id: str) -> Optional[str]:
+    """Retrieves remembered user instructions for a given session."""
+    return _SESSION_INSTRUCTIONS.get(session_id)
+
+
+def set_session_instructions(session_id: str, instructions: Optional[str]) -> None:
+    """Stores or updates remembered user instructions for a given session."""
+    if instructions and instructions.strip():
+        _SESSION_INSTRUCTIONS[session_id] = instructions.strip()
+    else:
+        _SESSION_INSTRUCTIONS.pop(session_id, None)
+
+
+def clear_session_instructions(session_id: str) -> None:
+    """Removes any remembered user instructions for a given session."""
+    _SESSION_INSTRUCTIONS.pop(session_id, None)
 
 
 def set_custom_checkpointer(checkpointer: Optional[BaseCheckpointSaver]) -> None:
@@ -168,6 +187,7 @@ async def record_session_metadata(
             record = ConversationSession(
                 session_id=session_id,
                 summary=summary,
+                instructions=get_session_instructions(session_id),
                 last_message_at=now,
                 created_at=now,
                 message_count=len(messages),
@@ -175,6 +195,7 @@ async def record_session_metadata(
             session.add(record)
         else:
             record.summary = summary
+            record.instructions = get_session_instructions(session_id)
             record.last_message_at = now
             record.message_count = len(messages)
         await session.commit()
@@ -232,6 +253,7 @@ async def delete_conversation_session(
         result = await session.exec(statement)
         record = result.first()
         if record:
+            clear_session_instructions(session_id)
             await session.delete(record)
             await session.commit()
             return True

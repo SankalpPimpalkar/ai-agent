@@ -1,0 +1,22 @@
+info:
+  name: reset settings to default
+  type: http
+  seq: 3
+
+http:
+  method: POST
+  url: http://127.0.0.1:8000/settings
+  body:
+    type: json
+    data: |-
+      {
+        "reset_to_default": true
+      }
+  auth: inherit
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
+  forwardAuthorizationHeader: false

@@ -13,13 +13,19 @@ A streamlined, production-ready AI agent service scaffolded with **FastAPI**, **
   - Prunes old tool call results from previous turns into short placeholders to free context tokens.
   - Summarizes and compresses earlier conversation turns when context overflows.
 - **Centralized API Endpoints**:
-  - `POST /chat`: Standard JSON response with multi-step tool execution.
-  - `POST /chat/stream`: Server-Sent Events (SSE) token streaming with `X-Session-ID` header.
-  - `GET /conversations`: List all conversation sessions with `session_id`, `summary`, and `last_message_at`.
+  - `GET /health`: Service health check reporting active feature flags.
+  - `GET /settings` & `POST /settings`: Centralized configuration endpoint for UI and clients to view and update system prompt, user instructions, sampling temperature, max iterations, and thinking mode with strict fishy-instruction security validation.
+  - `POST /chat`: Standard JSON response with multi-step tool execution and configurable `thinking` mode.
+  - `POST /chat/stream`: Server-Sent Events (SSE) token streaming with `X-Session-ID` header and configurable `thinking` mode.
+  - `GET /conversations`: List all conversation sessions with `session_id`, `summary`, and timestamps.
   - `GET /conversations/{session_id}`: Retrieve a conversation's full message history.
   - `DELETE /conversations/{session_id}`: Remove a conversation session.
-  - `POST /documents`: Unified RAG document ingestion endpoint (JSON or file uploads).
-  - `GET /health`: Service health check reporting active feature flags.
+  - `POST /documents`: Unified RAG document ingestion endpoint (JSON raw text or multipart file uploads).
+  - `GET /documents`: List all ingested documents and chunk counts in the vector knowledge base.
+  - `GET /documents/chunks`: Search and fetch matching chunks via query parameters.
+  - `POST /documents/query`: Search and fetch matching chunks via JSON body.
+  - `DELETE /documents/{doc_id}`: Cleanly delete a document and its embeddings from the vector database.
+  - `/evals/*`: Dedicated REST endpoints to manage isolated evaluation documents, run benchmarks, and inspect results.
 - **SQLModel Persistence**: Async SQLite / PostgreSQL session handling.
 - **Alembic Migrations**: Fully configured async migration pipeline (`alembic upgrade head`) wired to SQLModel metadata.
 
@@ -123,137 +129,353 @@ ENABLE_MCP=True
 
 ---
 
-## Document Management & RAG Knowledge Base (ChromaDB)
+## API Reference & Endpoints
 
-Persistent vector search is powered by **ChromaDB** (`langchain-chroma`) persisting embeddings under `data/chroma/`. Every ingested document receives or is assigned a unique `doc_id`.
+All endpoints support JSON and standard RESTful HTTP semantics. Interactive OpenAPI documentation is available at `http://localhost:8000/docs`.
 
-### 1. Ingest Documents (`POST /documents`)
+### 1. Health Check
 
-The endpoint accepts **both** raw JSON text and multipart file uploads in a single route:
+#### `GET /health`
+Returns service status, application name, and active feature flags.
 
-#### Option 1: Raw Text via JSON
-```bash
-curl -X POST http://localhost:8000/documents \
-  -H "Content-Type: application/json" \
-  -d '{"content": "LangChain enables modular LLM architectures.", "doc_id": "langchain-guide", "metadata": {"source": "manual"}}'
-```
-
-#### Option 2: File Upload (PDF, Word DOCX, Markdown, Text, Code)
-```bash
-# Upload a PDF, Word document (.docx), Markdown or text file
-curl -X POST http://localhost:8000/documents \
-  -F "file=@sample_report.pdf" \
-  -F "doc_id=quarterly-report-2026" \
-  -F 'metadata={"category": "finance"}'
-```
-
-*Response:*
-```json
-{
-  "status": "success",
-  "doc_id": "quarterly-report-2026",
-  "chunks_count": 8,
-  "message": "Successfully ingested 8 chunk(s) from 'sample_report.pdf' into knowledge base."
-}
-```
-
-### 2. List All Uploaded Documents (`GET /documents`)
-```bash
-curl http://localhost:8000/documents
-```
-*Response:*
-```json
-[
+- **Request**: None
+- **cURL Example**:
+  ```bash
+  curl http://localhost:8000/health
+  ```
+- **Response** (`200 OK`):
+  ```json
   {
-    "doc_id": "quarterly-report-2026",
-    "filename": "sample_report.pdf",
-    "source": "sample_report.pdf",
-    "chunks_count": 8,
-    "created_at": "2026-11-14T18:30:00Z"
+    "status": "ok",
+    "app_name": "ai-agent",
+    "rag_enabled": true,
+    "tools_enabled": true,
+    "mcp_enabled": true
   }
-]
-```
-
-### 3. Fetch Matching Chunks for a Query (`GET /documents/chunks` or `POST /documents/query`)
-Manually inspect what chunks, section headings, metadata, and similarity scores are returned for any user query or prompt:
-
-#### Option 1: Via GET Query Parameters
-```bash
-curl "http://localhost:8000/documents/chunks?query=GDPR+breach+notification+hours&k=3"
-```
-
-#### Option 2: Via POST JSON
-```bash
-curl -X POST http://localhost:8000/documents/query \
-  -H "Content-Type: application/json" \
-  -d '{"query": "GDPR breach notification hours", "k": 3}'
-```
-
-*Response:*
-```json
-{
-  "query": "GDPR breach notification hours",
-  "total_chunks": 3,
-  "chunks": [
-    {
-      "chunk_index": 1,
-      "content": "## Section: ShopNest Privacy Policy > 7. Security\n\nShopNest must notify supervisory authorities within 72 hours of becoming aware of a data breach where GDPR applies.",
-      "metadata": {
-        "doc_id": "quarterly-report-2026",
-        "chunk_index": 0,
-        "section": "ShopNest Privacy Policy > 7. Security",
-        "filename": "privacy_policy.pdf"
-      },
-      "score": 0.2841
-    }
-  ]
-}
-```
-
-### 4. Delete Document (`DELETE /documents/{doc_id}`)
-Deletes the document entirely and cleanly from ChromaDB (all chunk embeddings) and removes the registry entry:
-```bash
-curl -X DELETE http://localhost:8000/documents/quarterly-report-2026
-```
-*Response:*
-```json
-{
-  "status": "success",
-  "doc_id": "quarterly-report-2026",
-  "message": "Successfully deleted document 'quarterly-report-2026' and all its chunks from vector database."
-}
-```
+  ```
 
 ---
 
-## Listing & Managing Conversations
+### 2. Settings & Configuration Endpoints (`/settings`)
 
-### List all active conversations:
-```bash
-curl http://localhost:8000/conversations
-```
-*Response:*
-```json
-[
+Designed for UI layers, administrators, and clients to inspect and dynamically configure agent behavior, user instructions, sampling temperature, max iterations, and thinking mode in a dedicated endpoint. The core system prompt is internal and not exposed over the API (it can be updated locally via CLI tools like `cat` / `nano` editing `system-prompt.txt`).
+
+#### `GET /settings`
+Retrieves current runtime configuration, global user instructions, and feature flags.
+
+- **Request**: None
+- **cURL Example**:
+  ```bash
+  curl http://localhost:8000/settings
+  ```
+- **Response** (`200 OK`, `SettingsResponse`):
+  ```json
   {
-    "session_id": "session-101",
-    "summary": "Docker container configuration and networking",
-    "last_message_at": "2026-11-14T12:30:00Z",
-    "created_at": "2026-11-14T12:00:00Z",
-    "message_count": 4
+    "app_name": "ai-agent",
+    "model": "qwen3.5:9b",
+    "temperature": 0.7,
+    "max_iterations": 10,
+    "thinking": false,
+    "instructions": "Be concise and format all answers in bullet points.",
+    "rag_enabled": true,
+    "tools_enabled": true,
+    "mcp_enabled": true,
+    "persistent_memory_enabled": true
   }
-]
-```
+  ```
 
-### Inspect conversation history:
-```bash
-curl http://localhost:8000/conversations/session-101
-```
+#### `POST /settings` (or `PUT /settings`, `PATCH /settings`)
+Updates runtime configuration and user instructions. The system prompt is an abstract, immutable baseline loaded from `system-prompt.txt` / configuration that cannot be modified directly via settings. Users can provide extra instructions on top of the system prompt to customize agent behavior and how tasks should be performed, but user instructions cannot override security rules or core capabilities. Validates `instructions` to reject potential prompt injections or system overrides with HTTP 422.
 
-### Delete a conversation:
-```bash
-curl -X DELETE http://localhost:8000/conversations/session-101
-```
+- **Request Headers**: `Content-Type: application/json`
+- **Request Body** (`SettingsUpdateRequest`, all fields optional):
+  - `instructions` (*string, optional*): Global user instructions to steer task execution, behavior, tone, and formatting preferences. Subordinate to the system prompt and validated to ensure security guidelines and core capabilities cannot be overridden or bypassed.
+  - `temperature` (*float, optional, 0.0 to 2.0*): Default sampling temperature.
+  - `max_iterations` (*integer, optional, 1 to 50*): Default tool loop iteration ceiling.
+  - `thinking` (*boolean, optional*): Default thinking / reasoning mode.
+  - `reset_to_default` (*boolean, optional, default: false*): If `true`, clears custom user instructions and restores default runtime parameters.
+- **cURL Example**:
+  ```bash
+  curl -X POST http://localhost:8000/settings \
+    -H "Content-Type: application/json" \
+    -d '{
+      "instructions": "Be concise, polite, and structure multi-part answers as bullet points.",
+      "temperature": 0.5,
+      "max_iterations": 12,
+      "thinking": false
+    }'
+  ```
+- **Response** (`200 OK`, `SettingsResponse`): Returns updated configuration.
+
+---
+
+### 3. Chat & AI Agent Endpoints
+
+#### `POST /chat`
+Executes synchronous conversational turns with multi-step tool execution, automatic memory persistence, and configurable thinking/reasoning mode. Global instructions and base system prompt are configured via `/settings` or `.env`.
+
+- **Request Headers**: `Content-Type: application/json`
+- **Request Body** (`ChatRequest`):
+  - `message` (*string, required*): User query or prompt.
+  - `temperature` (*float, optional, 0.0 to 2.0*): Sampling temperature override for this turn. When omitted, uses the configured default from `/settings`.
+  - `max_iterations` (*integer, optional, 1 to 50*): Maximum tool execution loop iterations for this turn. When omitted, uses the configured default from `/settings`.
+  - `thinking` (*boolean, optional*): Explicitly enable or disable thinking/reasoning mode for this turn. When omitted, uses the configured default from `/settings`.
+  - `session_id` (*string, optional*): Existing session ID to resume conversation. If omitted, a new UUID is generated.
+  - `stream_tools` (*boolean, optional*): Reserved for tool execution notices (default `false`).
+- **cURL Example**:
+  ```bash
+  curl -X POST http://localhost:8000/chat \
+    -H "Content-Type: application/json" \
+    -d '{
+      "message": "Calculate (245 * 18) / 7 + 33^2",
+      "temperature": 0.5,
+      "max_iterations": 8,
+      "thinking": false,
+      "session_id": "sess-user-01"
+    }'
+  ```
+- **Response** (`200 OK`, `ChatResponse`):
+  ```json
+  {
+    "response": "The result is 1719.0.",
+    "model": "qwen3.5:9b",
+    "session_id": "sess-user-01"
+  }
+  ```
+
+#### `POST /chat/stream`
+Streams generated assistant tokens over Server-Sent Events (SSE). Emits `X-Session-ID` in HTTP headers so clients can track the conversation thread. Model selection is strictly governed by `.env` (`MODEL`), and system instructions originate from `/settings`.
+
+- **Request Headers**: `Content-Type: application/json`
+- **Request Body** (`ChatRequest`):
+  - `message` (*string, required*): User query or prompt.
+  - `temperature` (*float, optional, 0.0 to 2.0*): Sampling temperature override for this turn.
+  - `max_iterations` (*integer, optional, 1 to 50*): Maximum tool execution iterations.
+  - `thinking` (*boolean, optional*): Set to `false` for immediate content streaming without waiting for reasoning tokens; set to `true` to enable deep reasoning.
+  - `session_id` (*string, optional*): Session ID to resume or continue.
+  - `stream_tools` (*boolean, optional*): If `true`, emits `[Calling tool '<tool_name>'...]\n` notices in the stream.
+- **cURL Example**:
+  ```bash
+  curl -N -X POST http://localhost:8000/chat/stream \
+    -H "Content-Type: application/json" \
+    -d '{
+      "message": "What is the current time in Asia/Kolkata?",
+      "temperature": 0.3,
+      "max_iterations": 6,
+      "thinking": false,
+      "stream_tools": true,
+      "session_id": "sess-user-01"
+    }'
+  ```
+- **Response** (`200 OK`, `text/event-stream`, Headers: `X-Session-ID: sess-user-01`):
+  ```text
+  [Calling tool 'get_current_time'...]
+  The current time in Asia/Kolkata is 10:45 AM IST on November 21, 2026.
+  ```
+
+---
+
+### 4. Conversations & Session Memory Endpoints
+
+#### `GET /conversations`
+Lists all active persisted conversation sessions, ordered by most recent message first.
+
+- **Query Parameters**:
+  - `limit` (*integer, optional, default: 50*): Maximum sessions to return.
+  - `offset` (*integer, optional, default: 0*): Pagination offset.
+- **cURL Example**:
+  ```bash
+  curl "http://localhost:8000/conversations?limit=10&offset=0"
+  ```
+- **Response** (`200 OK`, list of `ConversationSessionItem`):
+  ```json
+  [
+    {
+      "session_id": "sess-user-01",
+      "summary": "Calculate arithmetic expression",
+      "last_message_at": "2026-11-21T10:45:00Z",
+      "created_at": "2026-11-21T10:40:00Z",
+      "message_count": 4
+    }
+  ]
+  ```
+
+#### `GET /conversations/{session_id}`
+Retrieves a specific conversation session along with its complete, turn-by-turn message history.
+
+- **Path Parameters**: `session_id` (*string, required*)
+- **cURL Example**:
+  ```bash
+  curl http://localhost:8000/conversations/sess-user-01
+  ```
+- **Response** (`200 OK`, `ConversationDetailResponse`):
+  ```json
+  {
+    "session_id": "sess-user-01",
+    "summary": "Calculate arithmetic expression",
+    "last_message_at": "2026-11-21T10:45:00Z",
+    "created_at": "2026-11-21T10:40:00Z",
+    "message_count": 2,
+    "messages": [
+      {
+        "role": "user",
+        "content": "Calculate (245 * 18) / 7 + 33^2",
+        "name": null,
+        "tool_calls": null
+      },
+      {
+        "role": "assistant",
+        "content": "The result is 1719.0.",
+        "name": null,
+        "tool_calls": null
+      }
+    ]
+  }
+  ```
+
+#### `DELETE /conversations/{session_id}`
+Deletes a conversation session record and its associated history.
+
+- **Path Parameters**: `session_id` (*string, required*)
+- **cURL Example**:
+  ```bash
+  curl -X DELETE http://localhost:8000/conversations/sess-user-01
+  ```
+- **Response** (`204 No Content`)
+
+---
+
+### 5. Document Management & RAG Knowledge Base (`/documents`)
+
+Persistent vector search uses ChromaDB under `data/chroma/`.
+
+#### `POST /documents`
+Ingests, chunks, and embeds documents into the production vector database. Supports both raw JSON text and multipart file uploads.
+
+- **Option A: Raw Text via JSON (`Content-Type: application/json`)**:
+  ```bash
+  curl -X POST http://localhost:8000/documents \
+    -H "Content-Type: application/json" \
+    -d '{
+      "content": "ShopNest notifies supervisory authorities within 72 hours of a personal data breach.",
+      "doc_id": "privacy-policy-2026",
+      "metadata": {"category": "compliance"}
+    }'
+  ```
+- **Option B: File Upload (`multipart/form-data`)** (.pdf, .docx, .md, .txt):
+  ```bash
+  curl -X POST http://localhost:8000/documents \
+    -F "file=@shopnest_privacy_policy.pdf" \
+    -F "doc_id=privacy-policy-2026" \
+    -F 'metadata={"category": "compliance"}'
+  ```
+- **Response** (`200 OK`, `DocumentIngestResponse`):
+  ```json
+  {
+    "status": "success",
+    "doc_id": "privacy-policy-2026",
+    "chunks_count": 18,
+    "message": "Successfully ingested 18 chunk(s) from 'shopnest_privacy_policy.pdf' into knowledge base."
+  }
+  ```
+
+#### `GET /documents`
+Lists all uploaded documents registered in the knowledge base.
+
+- **cURL Example**:
+  ```bash
+  curl http://localhost:8000/documents
+  ```
+- **Response** (`200 OK`, list of `UploadedDocumentItem`):
+  ```json
+  [
+    {
+      "doc_id": "privacy-policy-2026",
+      "filename": "shopnest_privacy_policy.pdf",
+      "source": "shopnest_privacy_policy.pdf",
+      "chunks_count": 18,
+      "created_at": "2026-11-21T10:00:00Z"
+    }
+  ]
+  ```
+
+#### `GET /documents/chunks`
+Fetches matching vector chunks for a search query using query parameters.
+
+- **Query Parameters**:
+  - `query` (*string, required*): Search query.
+  - `k` (*integer, optional, default: 4*): Number of chunks to retrieve.
+- **cURL Example**:
+  ```bash
+  curl "http://localhost:8000/documents/chunks?query=breach+notification+hours&k=2"
+  ```
+- **Response** (`200 OK`, `DocumentSearchResponse`):
+  ```json
+  {
+    "query": "breach notification hours",
+    "total_chunks": 2,
+    "chunks": [
+      {
+        "chunk_index": 1,
+        "content": "## Section: ShopNest Privacy Policy > 7. Security\n\n**Breach notification:** we notify affected users without undue delay, and within 72 hours to supervisory authorities.",
+        "metadata": {
+          "doc_id": "privacy-policy-2026",
+          "filename": "shopnest_privacy_policy.pdf",
+          "section": "ShopNest Privacy Policy > 7. Security"
+        },
+        "score": 0.912
+      }
+    ]
+  }
+  ```
+
+#### `POST /documents/query` (or `POST /documents/chunks`)
+Fetches matching vector chunks using a JSON payload.
+
+- **Request Body** (`DocumentSearchRequest`):
+  - `query` (*string, required*): Search query.
+  - `k` (*integer, optional, default: 4*): Number of chunks.
+- **cURL Example**:
+  ```bash
+  curl -X POST http://localhost:8000/documents/query \
+    -H "Content-Type: application/json" \
+    -d '{"query": "data retention support chats", "k": 2}'
+  ```
+- **Response** (`200 OK`, `DocumentSearchResponse`):
+  ```json
+  {
+    "query": "data retention support chats",
+    "total_chunks": 1,
+    "chunks": [
+      {
+        "chunk_index": 1,
+        "content": "## Section: ShopNest Privacy Policy > 6. Data Retention\n\nCustomer support chats: retained 3 years. Call recordings: 12 months.",
+        "metadata": {
+          "doc_id": "privacy-policy-2026",
+          "section": "ShopNest Privacy Policy > 6. Data Retention"
+        },
+        "score": 0.887
+      }
+    ]
+  }
+  ```
+
+#### `DELETE /documents/{doc_id}`
+Deletes a document entirely from ChromaDB (all embeddings) and removes its registry entry.
+
+- **Path Parameters**: `doc_id` (*string, required*)
+- **cURL Example**:
+  ```bash
+  curl -X DELETE http://localhost:8000/documents/privacy-policy-2026
+  ```
+- **Response** (`200 OK`, `DocumentDeleteResponse`):
+  ```json
+  {
+    "status": "success",
+    "doc_id": "privacy-policy-2026",
+    "message": "Successfully deleted document 'privacy-policy-2026' and all its chunks from vector database."
+  }
+  ```
 
 ---
 
@@ -313,17 +535,67 @@ curl -X POST http://localhost:8000/evals/documents \
 ```
 
 ### 2. List Evaluation Documents (`GET /evals/documents`)
-```bash
-curl http://localhost:8000/evals/documents
-```
+- **cURL Example**:
+  ```bash
+  curl http://localhost:8000/evals/documents
+  ```
+- **Response** (`200 OK`, list of `UploadedDocumentItem`):
+  ```json
+  [
+    {
+      "doc_id": "eval-doc-1",
+      "filename": "eval_manual.pdf",
+      "source": "eval_manual.pdf",
+      "chunks_count": 5,
+      "created_at": "2026-11-21T09:00:00Z"
+    }
+  ]
+  ```
 
-### 3. Delete Evaluation Document (`DELETE /evals/documents/{doc_id}`)
+### 3. Fetch Evaluation Chunks (`GET /evals/chunks` or `POST /evals/query`)
+Manually inspect matching chunks retrieved from the evaluation ChromaDB.
+
+- **Option A: Via GET Query**:
+  ```bash
+  curl "http://localhost:8000/evals/chunks?query=evaluation&k=2"
+  ```
+- **Option B: Via POST JSON**:
+  ```bash
+  curl -X POST http://localhost:8000/evals/query \
+    -H "Content-Type: application/json" \
+    -d '{"query": "evaluation", "k": 2}'
+  ```
+- **Response** (`200 OK`, `DocumentSearchResponse`):
+  ```json
+  {
+    "query": "evaluation",
+    "total_chunks": 2,
+    "chunks": [
+      {
+        "chunk_index": 1,
+        "content": "## Section: Eval Guide\n\nEvaluation documents are isolated.",
+        "metadata": {"doc_id": "eval-doc-1"},
+        "score": 0.94
+      }
+    ]
+  }
+  ```
+
+### 4. Delete Evaluation Document (`DELETE /evals/documents/{doc_id}`)
 Cleanly removes a document and its chunks from the evaluation Chroma DB:
 ```bash
 curl -X DELETE http://localhost:8000/evals/documents/eval-doc-1
 ```
+- **Response** (`200 OK`, `DocumentDeleteResponse`):
+  ```json
+  {
+    "status": "success",
+    "doc_id": "eval-doc-1",
+    "message": "Successfully deleted document 'eval-doc-1' and all its chunks from evaluation vector database."
+  }
+  ```
 
-### 4. Run Evaluation Benchmark (`POST /evals/run`)
+### 5. Run Evaluation Benchmark (`POST /evals/run`)
 Triggers LLM-as-a-judge evaluation across **Correctness**, **Answer Relevance**, **Groundedness**, and **Retrieval Relevance**, automatically syncing to LangSmith when `LANGCHAIN_API_KEY` is configured:
 ```bash
 curl -X POST http://localhost:8000/evals/run \
@@ -361,11 +633,27 @@ curl -X POST http://localhost:8000/evals/run \
 }
 ```
 
-### 5. Fetch Latest Evaluation Results (`GET /evals/results`)
+### 6. Fetch Latest Evaluation Results (`GET /evals/results`)
 Instantly retrieves the latest evaluation report for dashboard rendering without re-running tests:
 ```bash
 curl http://localhost:8000/evals/results
 ```
+- **Response** (`200 OK`, latest evaluation report JSON):
+  ```json
+  {
+    "status": "success",
+    "timestamp": "2026-11-21T10:45:56Z",
+    "dataset_name": "rag-agent-evaluation",
+    "total_cases": 1,
+    "metrics_summary": {
+      "overall_score": 0.96,
+      "correctness": 0.95,
+      "answer_relevance": 0.95,
+      "groundedness": 0.95,
+      "retrieval_relevance": 1.00
+    }
+  }
+  ```
 
 ---
 

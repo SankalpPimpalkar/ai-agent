@@ -35,6 +35,10 @@ async def init_db(db_engine: Optional[AsyncEngine] = None) -> None:
     eng = db_engine or engine
     async with eng.begin() as conn:
         await conn.run_sync(SQLModel.metadata.create_all)
+        try:
+            await conn.exec_driver_sql("ALTER TABLE conversation_sessions ADD COLUMN instructions TEXT")
+        except Exception:
+            pass
 
 
 async def get_session(db_engine: Optional[AsyncEngine] = None) -> AsyncGenerator[AsyncSession, None]:

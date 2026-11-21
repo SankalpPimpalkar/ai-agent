@@ -15,6 +15,7 @@ def get_llm(
     model_name = model or settings.MODEL
     url = base_url or settings.OLLAMA_BASE_URL
     temp = temperature if temperature is not None else settings.TEMPERATURE
+    active_reasoning = reasoning if reasoning is not None else getattr(settings, "ENABLE_REASONING", False)
 
     kwargs = {
         "model": model_name,
@@ -22,7 +23,7 @@ def get_llm(
         "temperature": temp,
         "client_kwargs": {"timeout": timeout},
     }
-    if reasoning is not None:
-        kwargs["reasoning"] = reasoning
+    if active_reasoning is not None:
+        kwargs["reasoning"] = active_reasoning
 
     return ChatOllama(**kwargs)

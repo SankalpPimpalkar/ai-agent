@@ -68,6 +68,16 @@ class TestAgentAndTools(unittest.IsolatedAsyncioTestCase):
         self.assertIsInstance(msgs[3], HumanMessage)
         self.assertEqual(msgs[3].content, "Next query")
 
+    async def test_build_messages_with_instructions(self):
+        runner = AgentRunner()
+        msgs = runner.build_messages(
+            message="Check",
+            instructions="Always reply in JSON format.",
+        )
+        self.assertIn("User Instructions:", msgs[0].content)
+        self.assertIn("Always reply in JSON format.", msgs[0].content)
+        self.assertIn("cannot override", msgs[0].content)
+
     async def test_agent_execution_sync_and_stream(self):
         fake_llm = FakeListChatModel(responses=["Agent response"])
         runner = await build_agent(llm=fake_llm, tools=[])

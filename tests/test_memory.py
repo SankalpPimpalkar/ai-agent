@@ -71,7 +71,7 @@ class TestMemoryAndMiddlewares(unittest.IsolatedAsyncioTestCase):
                 "Your name is Alice.",
             ]
         )
-        runner = await build_agent(llm=fake_llm, checkpointer=self.memory_saver)
+        runner = await build_agent(llm=fake_llm, tools=[], checkpointer=self.memory_saver)
         session_id = f"user-{uuid.uuid4()}"
 
         # Turn 1
@@ -92,7 +92,7 @@ class TestMemoryAndMiddlewares(unittest.IsolatedAsyncioTestCase):
 
     async def test_session_isolation(self):
         fake_llm = FakeListChatModel(responses=["Reply 1", "Reply 2"])
-        runner = await build_agent(llm=fake_llm, checkpointer=self.memory_saver)
+        runner = await build_agent(llm=fake_llm, tools=[], checkpointer=self.memory_saver)
 
         sess_a = "session-a"
         sess_b = "session-b"
@@ -169,7 +169,7 @@ class TestApiSessionManagement(unittest.TestCase):
         set_custom_checkpointer(self.memory_saver)
         self.settings = Settings(ENABLE_PERSISTENT_MEMORY=True)
         self.fake_llm = FakeListChatModel(responses=["Hello user!", "Welcome back!"])
-        self.agent_runner = AgentRunner(llm=self.fake_llm, checkpointer=self.memory_saver)
+        self.agent_runner = AgentRunner(llm=self.fake_llm, tools=[], checkpointer=self.memory_saver)
         self.app = build_app(app_settings=self.settings, agent_runner=self.agent_runner)
 
     def tearDown(self):

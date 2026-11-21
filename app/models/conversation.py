@@ -8,6 +8,7 @@ class ConversationSession(SQLModel, table=True):
 
     session_id: str = Field(primary_key=True, index=True, description="Unique session ID")
     summary: str = Field(default="New Conversation", description="Auto-updated conversation topic summary")
+    instructions: Optional[str] = Field(default=None, description="Persisted user instructions for this session")
     last_message_at: datetime = Field(
         default_factory=lambda: datetime.now(timezone.utc),
         index=True,
