@@ -10,7 +10,7 @@ http:
     type: json
     data: |-
       {
-        "message": "What is in your knowledge base?",
+        "message": "",
         "temperature": 0.0,
         "max_iterations": 10,
         "thinking": false

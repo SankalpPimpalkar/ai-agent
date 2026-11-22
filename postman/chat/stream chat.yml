@@ -10,7 +10,7 @@ http:
     type: json
     data: |-
       {
-        "message": "Do you have scheduler related tools?",
+        "message": "Can you check if the system is healthy or not?",
         "stream_tools": true,
         "thinking": false
       }

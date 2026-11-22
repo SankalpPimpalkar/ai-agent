@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 import os
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Dict
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import (
     AIMessage,
